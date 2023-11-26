@@ -1,0 +1,71 @@
+{
+    "000": {
+        "action": "find cup",
+        "situations": [
+            "The coffee cup is broken.",
+            "The coffee cup is dirty.",
+            "The coffee cup is on the floor.",
+            "There is no coffee cups."
+        ]
+    },
+    "001": {
+        "action": "find coffee maker",
+        "situations": [
+            "The coffee maker is missing."
+        ]
+    },
+    "002": {
+        "action": "open coffee maker",
+        "situations": [
+            "Ants have gotten into the coffee maker so you can not make coffee.",
+            "The coffee maker has been sealed shut.",
+            "The lid of coffee maker is jammed."
+        ]
+    },
+    "003": {
+        "action": "find coffee pod",
+        "situations": [
+            "The coffee pod is bad (expired).",
+            "There is no coffee pod."
+        ]
+    },
+    "004": {
+        "action": "pick up coffee pod",
+        "situations": [
+            "The coffee pod is dropped out onto the table.",
+            "The coffee pod spills on the floor."
+        ]
+    },
+    "005": {
+        "action": "find coffee maker",
+        "situations": [
+            "The coffee maker is missing."
+        ]
+    },
+    "006": {
+        "action": "put coffee pod into coffee maker",
+        "situations": [
+            "The coffee pod is dropped out onto the table.",
+            "The coffee pod spills on the floor."
+        ]
+    },
+    "007": {
+        "action": "close coffee maker",
+        "situations": [
+            "The coffee maker has been sealed shut.",
+            "The lid of coffee maker is jammed."
+        ]
+    },
+    "008": {
+        "action": "turn on coffee maker",
+        "situations": [
+            "The coffee maker has no power.",
+            "the coffee is too hot to drink.",
+            "The coffee has spilled.",
+            "The coffee maker cannot be turned on.",
+            "The coffee maker is not working.",
+            "The coffee maker switch is stuck.",
+            "The coffee is overflowing."
+        ]
+    }
+}
