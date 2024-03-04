@@ -9,10 +9,13 @@ import torch
 import requests
 # from huggingface_hub import snapshot_download
 from transformers import BlipProcessor, BlipForQuestionAnswering, Blip2Processor, Blip2ForConditionalGeneration
+from transformers import Blip2Processor, Blip2ForConditionalGeneration
+device = 'cuda'
+# processor = BlipProcessor.from_pretrained("ybelkada/blip-vqa-capfilt-large")
+# model = BlipForQuestionAnswering.from_pretrained("ybelkada/blip-vqa-capfilt-large")
+processor = Blip2Processor.from_pretrained("Salesforce/blip2-flan-t5-xxl")
+model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-flan-t5-xxl", device_map="auto")
 
-device = 'cpu'
-processor = BlipProcessor.from_pretrained("ybelkada/blip-vqa-capfilt-large")
-model = BlipForQuestionAnswering.from_pretrained("ybelkada/blip-vqa-capfilt-large")
 root_path = "datasets/tpvqa_dalle_v0/dalle_4/clean_dishes/"
 task_path = "datasets/tpvqa_dalle_v0/dalle_4/clean_dishes/"
 actions = ['find_plate', 'pickup_plate', 'find_faucet', 'wash_plate']
