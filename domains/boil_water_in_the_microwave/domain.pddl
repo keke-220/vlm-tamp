@@ -4,20 +4,20 @@
 
     (:types
         movable liquid furniture room agent - object
-        
+
         mug - movable
         water - liquid
         cabinet sink floor microwave - furniture
 
         kitchen - room
-        
+
         water-n-06 - water
         mug-n-04 - mug
         cabinet-n-01 - cabinet
         sink-n-01 - sink
         floor-n-01 - floor
         microwave-n-02 - microwave
-        
+
         agent-n-01 - agent
     )
 
@@ -74,7 +74,7 @@
 
     (:action openit
         :parameters (?a - agent ?o - object ?r - room)
-        :precondition (and (inview ?a ?o) (closed ?o) (inroom ?o ?r))
+        :precondition (and (inview ?a ?o) (inroom ?o ?r))
         :effect (and (not (closed ?o)) (not (turnedon ?o)) (forall
                 (?oo - object)
                 (when

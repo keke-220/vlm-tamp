@@ -9,6 +9,7 @@ import omnigibson as og
 from omnigibson import object_states
 from PIL import Image
 from omnigibson.macros import gm
+from omnigibson.utils.constants import CLASS_NAME_TO_CLASS_ID
 
 # from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives, StarterSemanticActionPrimitiveSet
 # Don't use GPU dynamics and use flatcache for performance boost
@@ -48,9 +49,17 @@ from omnigibson.systems import (
 PREDICATE_SAMPLING_Z_OFFSET = 0.02
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_WITH_OBJECT_AND_PREDICATE = 1000
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 100000
-PICK_OBJ_HEIGHT = 2
+PICK_OBJ_HEIGHT = 1.4
 obj_held = None
 filled = None
+inside_relationships = []
+
+
+def get_class_name_from_class_id(target_class_id):
+    for class_name, class_id in CLASS_NAME_TO_CLASS_ID.items():
+        if class_id == target_class_id:
+            return class_name
+    return None
 
 
 def yaw_to_quaternion(yaw):
@@ -76,167 +85,6 @@ def yaw_to_quaternion(yaw):
     quaternion = np.array([x, y, z, w])
 
     return quaternion
-
-
-def rotate_x(initial_quaternion, angle_degrees):
-    # Convert the angle to radians
-    angle_radians = np.radians(angle_degrees)
-
-    # Create a quaternion representing the rotation
-    rotation_quaternion = np.quaternion(
-        np.cos(angle_radians / 2), np.sin(angle_radians / 2), 0, 0
-    )
-
-    # Perform quaternion multiplication to apply the rotation
-    new_quaternion = rotation_quaternion * quat.as_quat_array(initial_quaternion)
-
-    return quat.as_float_array(new_quaternion)
-
-
-def rotate_z(initial_quaternion, angle_degrees):
-    # Convert the angle to radians
-    angle_radians = np.radians(angle_degrees)
-
-    rotation_quaternion = np.quaternion(
-        np.cos(angle_radians / 2), 0, 0, np.sin(angle_radians / 2)
-    )
-
-    # Perform quaternion multiplication to apply the rotation
-    new_quaternion = rotation_quaternion * quat.as_quat_array(initial_quaternion)
-
-    return quat.as_float_array(new_quaternion)
-
-
-def inspect():
-    while True:
-        og.sim.step()
-
-
-def run_sim(step=20):
-    for _ in range(step):
-        og.sim.step()
-        # Test: object in hand might be
-    dummy_action = np.zeros((11))
-    env.step(dummy_action)
-    global sim_counter
-    Image.fromarray(og.sim.viewer_camera.get_obs()["rgb"], "RGBA").save(
-        os.path.join(debug_path, str(sim_counter) + ".png")
-    )
-    sim_counter += 1
-
-
-def goto(obj_name="can_of_soda_89"):
-    # obj = scene.object_registry("name", obj_name)
-    obj = env.task.object_scope[obj_name].wrapped_obj
-    xyt = sample_teleport_pose_near_object(ap, obj)
-    # pos, orien = obj.get_position_orientation()
-    pos = np.empty([3])
-    pos[2] = robot_init_z
-    pos[1] = xyt[1]
-    pos[0] = xyt[0]
-    orien = yaw_to_quaternion(xyt[2])
-    robot.set_position_orientation(pos, orien)
-    global obj_held
-    if obj_held:
-        print("there is an object in hand -- moving this object as well")
-        obj_held.set_position([pos[0], pos[1], PICK_OBJ_HEIGHT])
-    watch_robot()
-    lookat(obj_name)
-    robot.tuck()
-    run_sim()
-
-
-def turnon(obj):
-    env.task.object_scope[obj].states[ToggledOn].set_value(True)
-    run_sim(step=100)
-
-
-def lookat(obj_name="can_of_soda_89"):
-    obj = env.task.object_scope[obj_name].wrapped_obj
-    target_obj_pose = obj.get_position_orientation()
-    # ap = StarterSemanticActionPrimitives(env)
-    head_q = ap._get_head_goal_q(target_obj_pose)
-    head_action = ap.robot.get_joint_positions()
-    for qid, cid in enumerate(ap.robot.camera_control_idx):
-        head_action[cid] = -head_q[qid]
-
-    robot.set_joint_positions(head_action)
-
-
-def watch_robot():
-    og.sim.viewer_camera.set_position_orientation(
-        position=np.array([0, 0, 3.5]) + robot.get_position(),
-        orientation=rotate_z(rotate_x(robot.get_orientation(), 90), -15),
-    )
-
-
-def fill_sink(sink):
-    env.task.object_scope[sink].states[ToggledOn].set_value(True)
-    run_sim(step=40)
-    env.task.object_scope[sink].states[ToggledOn].set_value(False)
-    run_sim()
-
-
-def grasp(obj_name="can_of_soda_89"):
-    global obj_held
-    if obj_held:
-        print("there is already an object in hand")
-        raise RuntimeError
-        # TODO: return False ?
-
-    # check if object is in the field of view -- assuming vision-based grasping
-
-    obj = env.task.object_scope[obj_name].wrapped_obj
-    # obj_held = env.task.object_scope['mug.n.04_1'].wrapped_obj
-    robot_pose = robot.get_position()
-    obj.set_position_orientation(
-        position=[robot_pose[0], robot_pose[1], PICK_OBJ_HEIGHT],
-        orientation=[0, 0, 0, 1],
-    )
-    # obj.set_orientation([0,0,0,1])
-    obj_held = obj
-    obj.disable_gravity()
-    # global
-    # if filled
-    # system.remove_all_particles()
-    run_sim()
-    return True
-
-
-def fill(container, source, liquid="water"):
-    global filled
-    if not obj_held:
-        print("you have to hold a container to fill a liquid")
-        raise RuntimeError
-    if filled:
-        print("there are already something in the container")
-        raise RuntimeError
-    system = get_system(liquid)
-
-    container_obj = obj_held
-    place_with_predicate(container, source, Inside)
-    assert container_obj.states[Filled].set_value(system, True)
-    # obj_held.states[Filled].get_value(get_system('water'))
-    run_sim()
-    # import pdb; pdb.set_trace()
-    # TODO: something wrong here
-    # assert container_obj.states[Filled].get_value(system)
-    # import pdb; pdb.set_trace()
-    filled = system
-    # container_obj.states[Filled].get_value(system)
-    # import pdb; pdb.set_trace()
-    system.remove_all_particles()
-    grasp(container)
-
-
-def openit(obj):
-    env.task.object_scope[obj].states[Open].set_value(True)
-    run_sim()
-
-
-def closeit(obj):
-    env.task.object_scope[obj].states[Open].set_value(False)
-    run_sim()
 
 
 def sample_teleport_pose_near_object(ap, obj, pose_on_obj=None, **kwargs):
@@ -283,16 +131,16 @@ def sample_teleport_pose_near_object(ap, obj, pose_on_obj=None, **kwargs):
             # import pdb; pdb.set_trace()
             return pose_2d
         print("Could not find valid position near object.")
-        raise ActionPrimitiveError(
-            ActionPrimitiveError.Reason.SAMPLING_ERROR,
-            "Could not find valid position near object.",
-            {
-                "target object": obj.name,
-                "target pos": obj.get_position(),
-                "pose on target": pose_on_obj,
-            },
-        )
-
+        # raise ActionPrimitiveError(
+        #     ActionPrimitiveError.Reason.SAMPLING_ERROR,
+        #     "Could not find valid position near object.",
+        #     {
+        #         "target object": obj.name,
+        #         "target pos": obj.get_position(),
+        #         "pose on target": pose_on_obj,
+        #     },
+        # )
+        return None
 
 def _sample_pose_with_object_and_predicate(
     predicate, held_obj, target_obj, near_poses=None, near_poses_threshold=None
@@ -344,8 +192,264 @@ def _sample_pose_with_object_and_predicate(
     )
 
 
+def get_fpv_rgb():
+    return robot.get_obs()["fetch:eyes_Camera_sensor"]["rgb"]
+
+
+def get_seg_semantic():
+    return robot.get_obs()["fetch:eyes_Camera_sensor"]["seg_semantic"]
+
+
+def get_seg_instance():
+    return robot.get_obs()["fetch:eyes_Camera_sensor"]["seg_instance"]
+
+
+def rotate_x(initial_quaternion, angle_degrees):
+    # Convert the angle to radians
+    angle_radians = np.radians(angle_degrees)
+
+    # Create a quaternion representing the rotation
+    rotation_quaternion = np.quaternion(
+        np.cos(angle_radians / 2), np.sin(angle_radians / 2), 0, 0
+    )
+
+    # Perform quaternion multiplication to apply the rotation
+    new_quaternion = rotation_quaternion * quat.as_quat_array(initial_quaternion)
+
+    return quat.as_float_array(new_quaternion)
+
+
+def rotate_z(initial_quaternion, angle_degrees):
+    # Convert the angle to radians
+    angle_radians = np.radians(angle_degrees)
+
+    rotation_quaternion = np.quaternion(
+        np.cos(angle_radians / 2), 0, 0, np.sin(angle_radians / 2)
+    )
+
+    # Perform quaternion multiplication to apply the rotation
+    new_quaternion = rotation_quaternion * quat.as_quat_array(initial_quaternion)
+
+    return quat.as_float_array(new_quaternion)
+
+
+def inview(obj_name):
+    obj = env.task.object_scope[obj_name].wrapped_obj
+    seg = get_seg_instance()
+    instances = np.unique(seg)
+    for instance_id in instances:
+        if obj == scene.objects[instance_id - 1]:
+            print("object in view!!!!!")
+            return True
+    print("object not in view")
+    return False
+
+
+def inspect():
+    try:
+        while True:
+            og.sim.step()
+    except KeyboardInterrupt:
+        print("Exiting ...")
+
+
+def run_sim(step=20):
+    for _ in range(step):
+        og.sim.step()
+        # Test: object in hand might be
+    dummy_action = np.zeros((11))
+    env.step(dummy_action)
+    global sim_counter
+    Image.fromarray(og.sim.viewer_camera.get_obs()["rgb"], "RGBA").save(
+        os.path.join(debug_path, str(sim_counter) + ".png")
+    )
+    sim_counter += 1
+
+
+def lookat(obj_name="can_of_soda_89"):
+    obj = env.task.object_scope[obj_name].wrapped_obj
+    target_obj_pose = obj.get_position_orientation()
+    # ap = StarterSemanticActionPrimitives(env)
+    head_q = ap._get_head_goal_q(target_obj_pose)
+    head_action = ap.robot.get_joint_positions()
+    for qid, cid in enumerate(ap.robot.camera_control_idx):
+        head_action[cid] = -head_q[qid]
+
+    robot.set_joint_positions(head_action)
+
+
+def watch_robot():
+    og.sim.viewer_camera.set_position_orientation(
+        position=np.array([0, 0, 3.5]) + robot.get_position(),
+        orientation=rotate_z(rotate_x(robot.get_orientation(), 90), -15),
+    )
+
+
+def goto(obj_name="can_of_soda_89", oracle=False):
+
+    # preconditions
+    # TODO:the object and robot should be in the same room?
+
+    # execution
+    obj = env.task.object_scope[obj_name].wrapped_obj
+    xyt = sample_teleport_pose_near_object(ap, obj)
+    if xyt is None:
+        print ("there is no free space near the object -- action failed")
+        return
+    pos = np.empty([3])
+    pos[2] = robot_init_z
+    pos[1] = xyt[1]
+    pos[0] = xyt[0]
+    orien = yaw_to_quaternion(xyt[2])
+    robot.set_position_orientation(pos, orien)
+    global obj_held
+    if obj_held:
+        print("there is an object in hand -- moving this object as well")
+        obj_held.set_position([pos[0], pos[1], PICK_OBJ_HEIGHT])
+    watch_robot()
+    lookat(obj_name)
+    robot.tuck()
+    run_sim()
+    return
+
+
+def turnon(obj, oracle=False):
+    if not oracle:
+        if not inview(obj):
+            # breakpoint()
+            print("turn on object failed -- unsatisfied hidden preconditions")
+            return
+    env.task.object_scope[obj].states[ToggledOn].set_value(True)
+    run_sim(step=100)
+
+
+def fill_sink(sink, oracle=False):
+    if not oracle:
+        if not inview(sink):
+            # breakpoint()
+            print("filling sink failed -- unsatisfied hidden preconditions")
+            return
+    env.task.object_scope[sink].states[ToggledOn].set_value(True)
+    run_sim(step=40)
+    env.task.object_scope[sink].states[ToggledOn].set_value(False)
+    run_sim()
+
+
+def grasp(obj_name="can_of_soda_89", oracle=False):
+
+    # preconditions
+
+    # check if hand is empty
+    global obj_held
+    if not oracle:
+        if obj_held:
+            print(
+                "there is already an object in hand -- unsatisfied hidden preconditions"
+            )
+            return
+            # TODO: return False ?
+
+        # check if object is in the field of view -- assuming vision-based grasping
+        if not inview(obj_name):
+            # breakpoint()
+            print(
+                "grasp object failed because of the object not in the view -- unsatisfied hidden preconditions"
+            )
+            return
+
+    obj = env.task.object_scope[obj_name].wrapped_obj
+    # obj_held = env.task.object_scope['mug.n.04_1'].wrapped_obj
+    robot_pose = robot.get_position()
+    obj.set_position_orientation(
+        position=[robot_pose[0], robot_pose[1], PICK_OBJ_HEIGHT],
+        orientation=[0, 0, 0, 1],
+    )
+    # obj.set_orientation([0,0,0,1])
+    obj_held = obj
+    obj.disable_gravity()
+    # global
+    # if filled
+    # system.remove_all_particles()
+    run_sim()
+
+    # manually remove this if it exists in our relationship tracker
+    global inside_relationships
+    for in_obj, recep in inside_relationships:
+        if in_obj == obj_name:
+            inside_relationships.remove((in_obj, recep))
+            break
+
+    return
+
+
+def fill(container, sink, liquid="water", oracle=False):
+    global filled
+    if not oracle:
+        if not obj_held:
+            print(
+                "you have to hold a container to fill a liquid -- unsatisfied hidden preconditions"
+            )
+            return
+        if filled:
+            print(
+                "there are already something in the container -- unsatisfied hidden preconditions"
+            )
+            return
+        if not inview(sink):
+            # breakpoint()
+            print(
+                "filling container near source failed -- unsatisfied hidden preconditions"
+            )
+            return
+    # system = get_system(liquid)
+
+    container_obj = obj_held
+    place_with_predicate(container, sink, OnTop, oracle=True)
+    while not container_obj.states[Filled].get_value(get_system(liquid)):
+        assert container_obj.states[Filled].set_value(get_system(liquid), True)
+        run_sim()
+    # assert container_obj.states[Filled].get_value(get_system(liquid))
+    # obj_held.states[Filled].get_value(get_system('water'))
+    run_sim()
+    # import pdb; pdb.set_trace()
+    # TODO: something wrong here
+    # assert container_obj.states[Filled].get_value(system)
+    # import pdb; pdb.set_trace()
+    filled = liquid
+    # container_obj.states[Filled].get_value(system)
+    # import pdb; pdb.set_trace()
+    get_system(liquid).remove_all_particles()
+    grasp(container, oracle=True)
+
+
+def openit(obj, oracle=False):
+
+    # check if object is in the field of view -- effects
+    if not oracle:
+        if not inview(obj):
+            # breakpoint()
+            print("opening object failed -- unsatisfied hidden preconditions")
+            return
+
+    env.task.object_scope[obj].states[Open].set_value(True)
+    run_sim()
+
+
+def closeit(obj, oracle=False):
+    if not oracle:
+        if not inview(obj):
+            # breakpoint()
+            print("closing object failed -- unsatisfied hidden preconditions")
+            return
+    env.task.object_scope[obj].states[Open].set_value(False)
+    run_sim()
+
+
 def place_with_predicate(
-    obj_in_hand_name="can_of_soda_89", obj_name="trash_can_85", predicate=OnTop
+    obj_in_hand_name="can_of_soda_89",
+    obj_name="trash_can_85",
+    predicate=OnTop,
+    oracle=False,
 ):
     """
     Yields action for the robot to navigate to the object if needed, then to place it
@@ -364,48 +468,49 @@ def place_with_predicate(
     obj_in_hand = env.task.object_scope[obj_in_hand_name].wrapped_obj
     # TODO: verify it here
     global obj_held
-    if obj_in_hand != obj_held:
-        print("You need to be grasping the object first to place it somewhere.")
-        raise ActionPrimitiveError(
-            ActionPrimitiveError.Reason.PRE_CONDITION_ERROR,
-            "You need to be grasping the object first to place it somewhere.",
-        )
+    if not oracle:
+        if obj_in_hand != obj_held:
+            print(
+                "You need to be grasping the object first to place it somewhere. -- unsatified hidden preconditions"
+            )
+            return
+        if not inview(obj_name):
+            # breakpoint()
+            print("placing object failed -- unsatisfied hidden preconditions")
+            return
+        if (
+            predicate == Inside
+            and not env.task.object_scope[obj_name].states[Open].get_value()
+        ):
+            print(
+                "placing object failed because the receptacle is closed-- unsatisfied hidden preconditions"
+            )
+            return
     # Sample location to place object
+    # while (
+    #     env.task.object_scope["mug.n.04_1"]
+    #     .states[Inside]
+    #     .get_value(env.task.object_scope["microwave.n.02_1"])
+    # ):
     obj_pose = _sample_pose_with_object_and_predicate(predicate, obj_in_hand, obj)
-    # hand_pose = ap._get_hand_pose_for_object_pose(obj_pose)
-    # obj_in_hand.wake()
     obj_in_hand.set_position_orientation(obj_pose[0], obj_pose[1])
+    # TODO: this line manually set the object relationships -- which should not happen
     obj_in_hand.enable_gravity()
-    # obj_in_hand.sleep()
-    # yield from self._navigate_if_needed(obj, pose_on_obj=hand_pose)
-    # yield from self._move_hand(hand_pose)
-    # yield from self._execute_release()
-
-    # if self._get_obj_in_hand() is not None:
-    #     raise ActionPrimitiveError(
-    #         ActionPrimitiveError.Reason.EXECUTION_ERROR,
-    #         "Could not release object - the object is still in your hand",
-    #         {"object": self._get_obj_in_hand().name}
-    #     )
-
-    # if not obj_in_hand.states[predicate].get_value(obj):
-    #     raise ActionPrimitiveError(
-    #         ActionPrimitiveError.Reason.EXECUTION_ERROR,
-    #         "Failed to place object at the desired place (probably dropped). The object was still released, so you need to grasp it again to continue",
-    #         {"dropped object": obj_in_hand.name, "target object": obj.name}
-    #     )
-    # run_sim()
-    global filled
     run_sim()
+
+    if predicate == Inside:
+        # manually add this into our inside relationship tracker due to issues with the simulator
+        global inside_relationships
+        inside_relationships.append((obj_in_hand_name, obj_name))
+
+    global filled
     if filled:
-        assert obj_held.states[Filled].set_value(filled, True)
-        # import pdb; pdb.set_trace()
-        # obj_held.states[Filled].get_value(filled)
-        # obj_held.states[Filled].set_value(filled, False)
+        while not obj_held.states[Filled].get_value(get_system(filled)):
+            assert obj_held.states[Filled].set_value(get_system(filled), True)
+            run_sim()
+        # assert obj_held.states[Filled].get_value(filled)
         filled = None
     obj_held = None
-
-    # yield from self._move_hand_upward()
 
 
 # Load the config
@@ -442,7 +547,6 @@ import os
 debug_path = "datadump/third_person"
 shutil.rmtree(debug_path, ignore_errors=True)
 os.makedirs(debug_path, exist_ok=True)
-sim_counter = 0
 
 # Load the environment
 env = og.Environment(configs=config)
@@ -453,45 +557,70 @@ robot_init_z = robot.get_position()[2]
 # Allow user to move camera more easily
 og.sim.enable_viewer_camera_teleoperation()
 # run_sim_inf()
-watch_robot()
-run_sim()
 ap = StarterSemanticActionPrimitives(env)
-# goto()
-# grasp()
-# goto("trash_can_85")
-# place_with_predicate()
-# import pdb; pdb.set_trace()
-# inspect()
-goto("cabinet.n.01_1")
 
-openit("cabinet.n.01_1")
+is_oracle = False
 
-goto("mug.n.04_1")
-# fill('mug.n.04_1', 'sink.n.01_1')
+num_success = 0
+num_failed = 0
 
-grasp("mug.n.04_1")
-goto("sink.n.01_1")
-# place_with_predicate('mug.n.04_1', 'sink.n.01_1', Inside)
+for _ in range(100):
+    env.reset()
+    watch_robot()
+    obj_held = None
+    filled = None
+    inside_relationships = []
+    sim_counter = 0
+    # TODO: the episode initialization has some bug -- hard code something for now
+    env.task.object_scope["mug.n.04_1"].set_position_orientation(
+        position=[-7.62, -3.76, 0.66], orientation=[0, 0, 0, 1]
+    )
+    run_sim()
 
-fill_sink("sink.n.01_1")
+    # begin execution
+    goto("cabinet.n.01_1", oracle=is_oracle)
 
-fill("mug.n.04_1", "sink.n.01_1")
-# env.task.object_scope['water.n.06_1'].disable_gravity()
-# env.task.object_scope['sink.n.01_1'].states[ToggledOn].set_value(False)
-# run_sim()
+    openit("cabinet.n.01_1", oracle=is_oracle)
+    goto("mug.n.04_1", oracle=is_oracle)
+    # fill('mug.n.04_1', 'sink.n.01_1')
 
-# grasp('mug.n.04_1')
-goto("microwave.n.02_1")
+    grasp("mug.n.04_1", oracle=is_oracle)
+    goto("sink.n.01_1", oracle=is_oracle)
+    # place_with_predicate('mug.n.04_1', 'sink.n.01_1', Inside)
 
-openit("microwave.n.02_1")
+    fill_sink("sink.n.01_1", oracle=is_oracle)
+    fill("mug.n.04_1", "sink.n.01_1", oracle=is_oracle)
+    # env.task.object_scope['water.n.06_1'].disable_gravity()
+    # env.task.object_scope['sink.n.01_1'].states[ToggledOn].set_value(False)
+    # run_sim()
 
+    # grasp('mug.n.04_1')
+    goto("microwave.n.02_1", oracle=is_oracle)
 
-place_with_predicate("mug.n.04_1", "microwave.n.02_1", Inside)
+    openit("microwave.n.02_1", oracle=is_oracle)
 
-closeit("microwave.n.02_1")
+    place_with_predicate("mug.n.04_1", "microwave.n.02_1", Inside, oracle=is_oracle)
 
-turnon("microwave.n.02_1")
+    closeit("microwave.n.02_1", oracle=is_oracle)
 
+    turnon("microwave.n.02_1", oracle=is_oracle)
+    # env.task.object_scope['mug.n.04_1'].states[Filled].get_value(get_system('water'))
+    # inspect()
 
-# env.task.object_scope['mug.n.04_1'].states[Filled].get_value(get_system('water'))
-# inspect()
+    # check success condition
+    if (
+        env.task.object_scope["mug.n.04_1"].states[Filled].get_value(get_system("water"))
+        and ("mug.n.04_1", "microwave.n.02_1") in inside_relationships
+        and env.task.object_scope["microwave.n.02_1"].states[ToggledOn].get_value()
+    ):
+        print("success")
+        num_success += 1
+    else:
+        print("failed")
+        num_failed += 1
+
+print ("="*30)
+print ("SUMMARY:")
+print (f"Number of success: {num_success}")
+print (f"Number of failure: {num_failed}")
+print ("="*30)
