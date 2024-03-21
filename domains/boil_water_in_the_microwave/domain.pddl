@@ -23,19 +23,16 @@
 
     (:predicates
         (inside ?o1 - object ?o2 - object)
-        (insource ?s - sink ?w - water)
+        (insource ?s - sink ?w - liquid)
         (inroom ?o - object ?r - room)
         (ontop ?o1 - object ?o2 - object)
         (inhand ?a - agent ?o - object)
         (inview ?a - agent ?o - object)
         (handempty ?a - agent)
         (closed ?o - object)
-        ; (open ?o - object)
-        (filled ?o - object ?w - water)
-        ; (turnedoff ?o - object)
+        (filled ?o - object ?w - liquid)
         (turnedon ?o - object)
         (cooked ?o - object)
-        ; (uncooked ?o - object)
     )
 
     (:action find
@@ -48,10 +45,10 @@
                     (not (inview ?a ?oo)))))
     )
 
-    (:action grasp
-        :parameters (?a - agent ?o - movable)
-        :precondition (and (inview ?a ?o) (handempty ?a))
-        :effect (and (not (inview ?a ?o)) (not (handempty ?a)) (inhand ?a ?o))
+    (:action graspfrom
+        :parameters (?a - agent ?o1 - movable ?o2 - object)
+        :precondition (and (inview ?a ?o1) (handempty ?a) (inside ?o1 ?o2))
+        :effect (and (not (inview ?a ?o1)) (not (handempty ?a)) (inhand ?a ?o1) (not (inside ?o1 ?o2)))
     )
 
     (:action placein
@@ -69,13 +66,13 @@
     (:action fill
         :parameters (?a - agent ?o - movable ?s - sink ?w - liquid)
         :precondition (and (inhand ?a ?o) (filled ?s ?w) (not (filled ?o ?w)) (inview ?a ?s))
-        :effect (filled ?o ?w)
+        :effect (and (filled ?o ?w) (not (filled ?s ?w)))
     )
 
     (:action openit
         :parameters (?a - agent ?o - object ?r - room)
         :precondition (and (inview ?a ?o) (inroom ?o ?r))
-        :effect (and (not (closed ?o)) (not (turnedon ?o)) (forall
+        :effect (and (not (closed ?o)) (forall
                 (?oo - object)
                 (when
                     (inside ?oo ?o)
