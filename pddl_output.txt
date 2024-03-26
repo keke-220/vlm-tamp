@@ -1,5 +1,3 @@
-(find agent-n-01_1 cabinet-n-01_1 kitchen)
-(openit agent-n-01_1 cabinet-n-01_1 kitchen)
 (find agent-n-01_1 microwave-n-02_1 kitchen)
 (openit agent-n-01_1 microwave-n-02_1 kitchen)
 (find agent-n-01_1 mug-n-04_1 kitchen)
@@ -12,4 +10,4 @@
 (placein agent-n-01_1 mug-n-04_1 microwave-n-02_1)
 (closeit agent-n-01_1 microwave-n-02_1 kitchen)
 (microwave_water agent-n-01_1 microwave-n-02_1 mug-n-04_1 water-n-06_1)
-; cost = 14 (unit cost)
+; cost = 12 (unit cost)

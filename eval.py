@@ -3,6 +3,7 @@ Example script demo'ing robot primitive to solve a task
 """
 
 import os
+import json
 import yaml
 import numpy as np
 import omnigibson as og
@@ -10,6 +11,8 @@ from omnigibson import object_states
 from PIL import Image
 from omnigibson.macros import gm
 from omnigibson.utils.constants import CLASS_NAME_TO_CLASS_ID
+from pddl_sim import pddlsim
+from gpt4v import GPT4VAgent
 
 # from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives, StarterSemanticActionPrimitiveSet
 # Don't use GPU dynamics and use flatcache for performance boost
@@ -50,6 +53,11 @@ PREDICATE_SAMPLING_Z_OFFSET = 0.02
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_WITH_OBJECT_AND_PREDICATE = 1000
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 100000
 PICK_OBJ_HEIGHT = 1.4
+DOMAIN = "domains/boil_water_in_the_microwave/domain.pddl"
+NUM_TRIALS = 100
+CHECK_PRECONDITION = True
+CHECK_EFFECT = False
+
 obj_held = None
 filled = None
 inside_relationships = []
@@ -141,6 +149,7 @@ def sample_teleport_pose_near_object(ap, obj, pose_on_obj=None, **kwargs):
         #     },
         # )
         return None
+
 
 def _sample_pose_with_object_and_predicate(
     predicate, held_obj, target_obj, near_poses=None, near_poses_threshold=None
@@ -291,10 +300,12 @@ def goto(obj_name="can_of_soda_89", oracle=False):
     # TODO:the object and robot should be in the same room?
 
     # execution
+    robot.tuck()
+    run_sim()
     obj = env.task.object_scope[obj_name].wrapped_obj
     xyt = sample_teleport_pose_near_object(ap, obj)
     if xyt is None:
-        print ("there is no free space near the object -- action failed")
+        print("there is no free space near the object -- action failed")
         return
     pos = np.empty([3])
     pos[2] = robot_init_z
@@ -513,6 +524,88 @@ def place_with_predicate(
     obj_held = None
 
 
+def format_action_params(action):
+    params = action[1:]
+    return [p.replace("-", ".") for p in params]
+
+
+def translate_fact_to_question(fact):
+    neg_suffix = " "
+    if fact[0] == "not":
+        neg_suffix = " not "
+        fact = fact[1:]
+
+    predicate = fact[0]
+    if predicate in ["inside", "inroom", "filled"]:
+        return f"Is {fact[1].split('-')[0]}{neg_suffix}{predicate} {fact[2].split('-')[0]}?"
+    elif predicate in ["insource", "inhand", "inview"]:
+        return f"Is {fact[2].split('-')[0]}{neg_suffix}{predicate} {fact[1].split('-')[0]}?"
+    elif predicate in ["handempty", "closed", "turnedon", "cooked"]:
+        return f"Is {fact[1].split('-')[0]}{neg_suffix}{predicate}?"
+    else:
+        raise RuntimeError
+
+
+def update_states_by_fact(states, fact):
+    if fact[0] == "not":
+        formatted_fact = f"(not ({fact[1]}"
+        for param in fact[2:]:
+            formatted_fact += f" {param}"
+        formatted_fact += "))"
+    else:
+        formatted_fact = f"({fact[0]}"
+        for param in fact[1:]:
+            formatted_fact += f" {param}"
+        formatted_fact += ")"
+    print(formatted_fact)
+    if formatted_fact in states:
+        states.remove(formatted_fact)
+
+    return states
+
+
+def write_states_into_problem(states, previous_problem):
+    prob = open(previous_problem).readlines()
+    init_line = prob.index("    (:init\n")
+    end_init_line = prob.index("    (:goal\n")
+    before_init = prob[: init_line + 1]
+    after_init = prob[end_init_line - 2 :]
+    for state_id, state in enumerate(states):
+        states[state_id] = f"        {state}\n"
+    new_problem = before_init + states + after_init
+    new_problem_name = "updated_problem.pddl"
+    with open(new_problem_name, "w") as f:
+        f.write("".join(new_problem))
+    return new_problem_name
+
+
+def check_states_and_update_problem(states, facts, previous_problem):
+    unmatches = []
+    is_state_updated = False
+    facts_nl = []
+    for fact in facts:
+
+        # TODO: need more discussions here
+        # # we assume these two predicates don't change over time
+        # if fact[0] in ["inroom", "insource"] or fact[1] in ["inroom", "insource"]:
+        #     continue
+
+        fact_nl = translate_fact_to_question(fact)
+        facts_nl.append(fact_nl)
+    is_match_results = vlm_agent.ask(";".join(facts_nl), get_fpv_rgb())
+    for idx, is_match in enumerate(is_match_results):
+        if is_match == "no":
+            unmatches.append(facts[idx])
+            is_state_updated = True
+
+    for unmatched_fact in unmatches:
+        states = update_states_by_fact(states, unmatched_fact)
+
+    updated_problem_file = write_states_into_problem(states, previous_problem)
+    # updated_problem_file = previous_problem
+    return is_state_updated, updated_problem_file
+
+
 # Load the config
 # config_filename = os.path.join(og.example_config_path, "tiago_primitives.yaml")
 config_filename = os.path.join(og.example_config_path, "fetch_behavior.yaml")
@@ -558,13 +651,16 @@ robot_init_z = robot.get_position()[2]
 og.sim.enable_viewer_camera_teleoperation()
 # run_sim_inf()
 ap = StarterSemanticActionPrimitives(env)
+planner = pddlsim(DOMAIN)
+vlm_agent = GPT4VAgent()
 
-is_oracle = False
+init_problem_file = f"domains/{a_name}/problem.pddl"
 
-num_success = 0
-num_failed = 0
+is_oracle = True
 
-for _ in range(100):
+exp_results = {"num_success": 0, "num_failed": 0}
+
+for _ in range(NUM_TRIALS):
     env.reset()
     watch_robot()
     obj_held = None
@@ -577,50 +673,101 @@ for _ in range(100):
     )
     run_sim()
 
-    # begin execution
-    goto("cabinet.n.01_1", oracle=is_oracle)
+    problem_file = init_problem_file
+    terminate = False
 
-    openit("cabinet.n.01_1", oracle=is_oracle)
-    goto("mug.n.04_1", oracle=is_oracle)
-    # fill('mug.n.04_1', 'sink.n.01_1')
+    while not terminate:
+        # planning
+        plan = planner.plan(problem_file)
+        if not plan:
+            break
+        # begin execution
+        for action_step, action in enumerate(plan):
+            primitive = action[0]
+            action_params = format_action_params(action)
 
-    grasp("mug.n.04_1", oracle=is_oracle)
-    goto("sink.n.01_1", oracle=is_oracle)
-    # place_with_predicate('mug.n.04_1', 'sink.n.01_1', Inside)
+            if CHECK_PRECONDITION:
+                # 1. given an action, get all the preconditions formatted as NL
+                # 2. ask each precondition using vlm
+                # 3. if a precondition is not satisfied, modify that in the intermediate state
+                # 4. breakout the loop, use intermediate state to generate new problem file
+                current_states = planner.get_intermediate_states(
+                    problem_file, "pddl_output.txt"
+                )[action_step]
+                preconditions = planner.get_preconditions_by_action(action)
+                unmatch, problem_file = check_states_and_update_problem(
+                    current_states, preconditions, problem_file
+                )
+                if unmatch:
+                    break
 
-    fill_sink("sink.n.01_1", oracle=is_oracle)
-    fill("mug.n.04_1", "sink.n.01_1", oracle=is_oracle)
-    # env.task.object_scope['water.n.06_1'].disable_gravity()
-    # env.task.object_scope['sink.n.01_1'].states[ToggledOn].set_value(False)
-    # run_sim()
+            if primitive == "find":
+                goto(action_params[1], oracle=is_oracle)
+            elif primitive == "openit":
+                openit(action_params[1], oracle=is_oracle)
+            elif primitive == "graspfrom":
+                grasp(action_params[1], oracle=is_oracle)
+            elif primitive == "fillsink":
+                fill_sink(action_params[1], oracle=is_oracle)
+            elif primitive == "fill":
+                fill(action_params[1], action_params[2], oracle=is_oracle)
+            elif primitive == "placein":
+                place_with_predicate(
+                    action_params[1], action_params[2], Inside, oracle=is_oracle
+                )
+            elif primitive == "closeit":
+                closeit(action_params[1], oracle=is_oracle)
+            elif primitive == "microwave_water":
+                turnon(action_params[1], oracle=is_oracle)
+            else:
+                raise RuntimeError
 
-    # grasp('mug.n.04_1')
-    goto("microwave.n.02_1", oracle=is_oracle)
+            if CHECK_EFFECT:
+                current_states = planner.get_intermediate_states(
+                    problem_file, "pddl_output.txt"
+                )[action_step + 1]
+                effects = get_effects_by_action(action)
+                unmatch, problem_file = check_states_and_update_problem(
+                    current_states, effects, problem_file
+                )
+                if unmatch:
+                    break
 
-    openit("microwave.n.02_1", oracle=is_oracle)
+            if action_step == len(plan) - 1:
+                terminate = True
 
-    place_with_predicate("mug.n.04_1", "microwave.n.02_1", Inside, oracle=is_oracle)
-
-    closeit("microwave.n.02_1", oracle=is_oracle)
-
-    turnon("microwave.n.02_1", oracle=is_oracle)
-    # env.task.object_scope['mug.n.04_1'].states[Filled].get_value(get_system('water'))
-    # inspect()
+    # predefined
+    # goto("cabinet.n.01_1", oracle=is_oracle)
+    # openit("cabinet.n.01_1", oracle=is_oracle)
+    # goto("mug.n.04_1", oracle=is_oracle)
+    # grasp("mug.n.04_1", oracle=is_oracle)
+    # goto("sink.n.01_1", oracle=is_oracle)
+    # fill_sink("sink.n.01_1", oracle=is_oracle)
+    # fill("mug.n.04_1", "sink.n.01_1", oracle=is_oracle)
+    # goto("microwave.n.02_1", oracle=is_oracle)
+    # openit("microwave.n.02_1", oracle=is_oracle)
+    # place_with_predicate("mug.n.04_1", "microwave.n.02_1", Inside, oracle=is_oracle)
+    # closeit("microwave.n.02_1", oracle=is_oracle)
+    # turnon("microwave.n.02_1", oracle=is_oracle)
 
     # check success condition
     if (
-        env.task.object_scope["mug.n.04_1"].states[Filled].get_value(get_system("water"))
+        env.task.object_scope["mug.n.04_1"]
+        .states[Filled]
+        .get_value(get_system("water"))
         and ("mug.n.04_1", "microwave.n.02_1") in inside_relationships
         and env.task.object_scope["microwave.n.02_1"].states[ToggledOn].get_value()
     ):
         print("success")
-        num_success += 1
+        exp_results["num_success"] += 1
     else:
         print("failed")
-        num_failed += 1
+        exp_results["num_failed"] += 1
+    with open("exp_results.json", "w") as f:
+        json.dump(exp_results, f)
 
-print ("="*30)
-print ("SUMMARY:")
-print (f"Number of success: {num_success}")
-print (f"Number of failure: {num_failed}")
-print ("="*30)
+print("=" * 30)
+print("SUMMARY:")
+print(f"Number of success: {exp_results['num_success']}")
+print(f"Number of failure: {exp_results['num_success']}")
+print("=" * 30)

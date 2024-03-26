@@ -1,5 +1,6 @@
 import os
 import subprocess
+from pddl import parse_domain, parse_problem
 
 FAST_DOWNWARD_ALIAS = "lama-first"
 TIME_LIMIT = 10
@@ -13,14 +14,17 @@ class pddlsim(object):
         return action.replace("(", "").replace(")", "").split(" ")
 
     def plan(self, problem_file):
-        output = subprocess.check_output(
-            f"python ./downward/fast-downward.py --alias {FAST_DOWNWARD_ALIAS} "
-            # + f"--search-time-limit {TIME_LIMIT} "
-            + "--plan-file pddl_output.txt "
-            # + f"--sas-file aaa.sas "
-            + f"{self.domain_file} {problem_file}",
-            shell=True,
-        )
+        try:
+            output = subprocess.check_output(
+                f"python ./downward/fast-downward.py --alias {FAST_DOWNWARD_ALIAS} "
+                # + f"--search-time-limit {TIME_LIMIT} "
+                + "--plan-file pddl_output.txt "
+                # + f"--sas-file aaa.sas "
+                + f"{self.domain_file} {problem_file}",
+                shell=True,
+            )
+        except subprocess.CalledProcessError:
+            return None
         output = output.decode("utf-8").split("\n")
         start_index = next(
             (i + 1 for i, s in enumerate(output) if "Actual search time" in s), None
@@ -62,16 +66,62 @@ class pddlsim(object):
             if "Checking" in state:
                 int_states.append(init_states.copy())
             elif "Adding" in state:
-                init_states.append(' '.join(state.split(' ')[1:]))
+                init_states.append(" ".join(state.split(" ")[1:]))
             elif "Deleting" in state:
-                init_states.remove(' '.join(state.split(' ')[1:]))
+                formatted = " ".join(state.split(" ")[1:])
+                if formatted in init_states:
+                    init_states.remove(formatted)
             state_i += 1
         int_states.append(init_states.copy())
-        int_states.pop(0)
+        # int_states.pop(0)
         return int_states
+
+    def get_preconditions_by_action(self, action):
+        action_name = action[0]
+        actions = [x for x in parse_domain(self.domain_file).actions]
+        preconditions = [ac.precondition for ac in actions if ac.name == action_name][
+            0
+        ].operands
+        param_vars = [ac.parameters for ac in actions if ac.name == action_name][0]
+        return self.reformat_fact_using_values(action, param_vars, preconditions)
+    
+    def get_effects_by_action(self, action):
+        # action_name = action[0]
+        # actions = [x for x in parse_domain(self.domain_file).actions]
+        # effects = [ac.effect for ac in actions if ac.name == action_name][
+        #     0
+        # ].operands
+        # param_vars = [ac.parameters for ac in actions if ac.name == action_name][0]
+        # return self.reformat_fact_using_values(action, param_vars, effects)
+
+        # TODO: use state change to determine effects
+        pass
+
+    def reformat_fact_using_values(self, action, param_vars, facts):
+        action_params = action[1:-1]
+        reformat_pres = []
+
+        for fact in facts:
+            reformat_pre = []
+            if not hasattr(fact, 'name'):
+                fact = fact.argument
+                reformat_pre.append('not')
+            predicate = fact.name
+            reformat_pre.append(predicate)
+            parameters = fact.terms
+            for param in parameters:
+                reformat_pre.append(action_params[param_vars.index(param)])
+            reformat_pres.append(reformat_pre)
+        return reformat_pres
+
 
 if __name__ == "__main__":
     p = "domains/boil_water_in_the_microwave/problem.pddl"
+    p = "updated_problem.pddl"
     test = pddlsim("domains/boil_water_in_the_microwave/domain.pddl")
     plan = test.plan(p)
-    test.get_intermediate_states(p, "pddl_output.txt")
+    for action in plan:
+        print(test.get_preconditions_by_action(action))
+    
+    print(plan)
+    # test.get_intermediate_states(p, "pddl_output.txt")

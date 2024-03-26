@@ -25,7 +25,6 @@
         (inside ?o1 - object ?o2 - object)
         (insource ?s - sink ?w - liquid)
         (inroom ?o - object ?r - room)
-        (ontop ?o1 - object ?o2 - object)
         (inhand ?a - agent ?o - object)
         (inview ?a - agent ?o - object)
         (handempty ?a - agent)
