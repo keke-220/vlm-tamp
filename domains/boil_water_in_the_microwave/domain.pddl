@@ -44,10 +44,10 @@
                     (not (inview ?a ?oo)))))
     )
 
-    (:action graspfrom
+    (:action grasp
         :parameters (?a - agent ?o1 - movable ?o2 - object)
-        :precondition (and (inview ?a ?o1) (handempty ?a) (inside ?o1 ?o2))
-        :effect (and (not (inview ?a ?o1)) (not (handempty ?a)) (inhand ?a ?o1) (not (inside ?o1 ?o2)))
+        :precondition (and (inview ?a ?o1) (handempty ?a))
+        :effect (and (not (inview ?a ?o1)) (not (handempty ?a)) (inhand ?a ?o1))
     )
 
     (:action placein
@@ -81,7 +81,7 @@
 
     (:action closeit
         :parameters (?a - agent ?o - object ?r - room)
-        :precondition (and (inview ?a ?o) (not (closed ?o)) (inroom ?o ?r))
+        :precondition (and (inview ?a ?o) (inroom ?o ?r))
         :effect (and (closed ?o) (forall
                 (?oo - object)
                 (when
@@ -92,9 +92,13 @@
 
     (:action microwave_water
         :parameters (?a - agent ?m - microwave ?o - movable ?w - water)
-        :precondition (and (inview ?a ?m) (closed ?m) (not (turnedon ?m)) (inside ?o ?m) (filled ?o ?w)) ; this will potentially cause problem, where the robot will stuck at checking if the microwave has the cup inside
+        :precondition (and (inview ?a ?m) (closed ?m) (inside ?o ?m) (filled ?o ?w)) ; this will potentially cause problem, where the robot will stuck at checking if the microwave has the cup inside
         :effect (and (turnedon ?m) (cooked ?w))
     )
-)
 
-; turnedoff, turnedon, cooked, uncooked
+    ; (:action turnon_microwave
+    ;     :parameters (?a - agent ?m - microwave)
+    ;     :precondition (and (inview ?a ?m) (closed ?m))
+    ;     :effect (and (turnedon ?m))
+    ; )
+)

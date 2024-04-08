@@ -2,8 +2,10 @@
 Example script demo'ing robot primitive to solve a task
 """
 
+import random
 import os
 import json
+import time
 import yaml
 import numpy as np
 import omnigibson as og
@@ -52,11 +54,18 @@ from omnigibson.systems import (
 PREDICATE_SAMPLING_Z_OFFSET = 0.02
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_WITH_OBJECT_AND_PREDICATE = 1000
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 100000
-PICK_OBJ_HEIGHT = 1.4
+PICK_OBJ_HEIGHT = 1.15
 DOMAIN = "domains/boil_water_in_the_microwave/domain.pddl"
-NUM_TRIALS = 100
-CHECK_PRECONDITION = True
-CHECK_EFFECT = False
+NUM_TRIALS = 50
+CHECK_PRECONDITION = False
+CHECK_EFFECT = True
+MAX_NUM_ACTION = 50
+MAX_TELEPORT_DIST = 0.5
+MIN_TELEPORT_DIST = 2.0
+ACTION_SUCCESS_PROB = 0.9
+LOG_DIR = "datadump/"
+
+is_oracle = False
 
 obj_held = None
 filled = None
@@ -102,7 +111,7 @@ def sample_teleport_pose_near_object(ap, obj, pose_on_obj=None, **kwargs):
             pos_on_obj = ap._sample_position_on_aabb_side(obj)
             pose_on_obj = [pos_on_obj, np.array([0, 0, 0, 1])]
 
-            distance = np.random.uniform(1.0, 2.0)
+            distance = np.random.uniform(MIN_TELEPORT_DIST, MAX_TELEPORT_DIST)
             yaw = np.random.uniform(-np.pi, np.pi)
             avg_arm_workspace_range = np.mean(ap.robot.arm_workspace_range[ap.arm])
             pose_2d = np.array(
@@ -306,7 +315,7 @@ def goto(obj_name="can_of_soda_89", oracle=False):
     xyt = sample_teleport_pose_near_object(ap, obj)
     if xyt is None:
         print("there is no free space near the object -- action failed")
-        return
+        return False
     pos = np.empty([3])
     pos[2] = robot_init_z
     pos[1] = xyt[1]
@@ -321,7 +330,7 @@ def goto(obj_name="can_of_soda_89", oracle=False):
     lookat(obj_name)
     robot.tuck()
     run_sim()
-    return
+    return True
 
 
 def turnon(obj, oracle=False):
@@ -330,8 +339,12 @@ def turnon(obj, oracle=False):
             # breakpoint()
             print("turn on object failed -- unsatisfied hidden preconditions")
             return
+        prob = random.random()
+        if prob > ACTION_SUCCESS_PROB:
+            print("action failed randomly")
+            return
     env.task.object_scope[obj].states[ToggledOn].set_value(True)
-    run_sim(step=100)
+    run_sim()
 
 
 def fill_sink(sink, oracle=False):
@@ -339,6 +352,10 @@ def fill_sink(sink, oracle=False):
         if not inview(sink):
             # breakpoint()
             print("filling sink failed -- unsatisfied hidden preconditions")
+            return
+        prob = random.random()
+        if prob > ACTION_SUCCESS_PROB:
+            print("action failed randomly")
             return
     env.task.object_scope[sink].states[ToggledOn].set_value(True)
     run_sim(step=40)
@@ -368,6 +385,12 @@ def grasp(obj_name="can_of_soda_89", oracle=False):
             )
             return
 
+        # there is some probability that the grasp action will fail
+        prob = random.random()
+        if prob > ACTION_SUCCESS_PROB:
+            print("action failed randomly")
+            return
+
     obj = env.task.object_scope[obj_name].wrapped_obj
     # obj_held = env.task.object_scope['mug.n.04_1'].wrapped_obj
     robot_pose = robot.get_position()
@@ -382,7 +405,6 @@ def grasp(obj_name="can_of_soda_89", oracle=False):
     # if filled
     # system.remove_all_particles()
     run_sim()
-
     # manually remove this if it exists in our relationship tracker
     global inside_relationships
     for in_obj, recep in inside_relationships:
@@ -411,6 +433,10 @@ def fill(container, sink, liquid="water", oracle=False):
             print(
                 "filling container near source failed -- unsatisfied hidden preconditions"
             )
+            return
+        prob = random.random()
+        if prob > ACTION_SUCCESS_PROB:
+            print("action failed randomly")
             return
     # system = get_system(liquid)
 
@@ -441,7 +467,10 @@ def openit(obj, oracle=False):
             # breakpoint()
             print("opening object failed -- unsatisfied hidden preconditions")
             return
-
+        prob = random.random()
+        if prob > ACTION_SUCCESS_PROB:
+            print("action failed randomly")
+            return
     env.task.object_scope[obj].states[Open].set_value(True)
     run_sim()
 
@@ -451,6 +480,10 @@ def closeit(obj, oracle=False):
         if not inview(obj):
             # breakpoint()
             print("closing object failed -- unsatisfied hidden preconditions")
+            return
+        prob = random.random()
+        if prob > ACTION_SUCCESS_PROB:
+            print("action failed randomly")
             return
     env.task.object_scope[obj].states[Open].set_value(False)
     run_sim()
@@ -496,6 +529,10 @@ def place_with_predicate(
             print(
                 "placing object failed because the receptacle is closed-- unsatisfied hidden preconditions"
             )
+            return
+        prob = random.random()
+        if prob > ACTION_SUCCESS_PROB:
+            print("action failed randomly")
             return
     # Sample location to place object
     # while (
@@ -557,9 +594,9 @@ def update_states_by_fact(states, fact):
         for param in fact[1:]:
             formatted_fact += f" {param}"
         formatted_fact += ")"
-    print(formatted_fact)
     if formatted_fact in states:
         states.remove(formatted_fact)
+        print(f"removing {formatted_fact}")
 
     return states
 
@@ -579,31 +616,51 @@ def write_states_into_problem(states, previous_problem):
     return new_problem_name
 
 
-def check_states_and_update_problem(states, facts, previous_problem):
+def check_states_and_update_problem(int_states, facts, previous_problem):
+    states = int_states.copy()
     unmatches = []
     is_state_updated = False
     facts_nl = []
+    valid_facts = []
     for fact in facts:
 
         # TODO: need more discussions here
-        # # we assume these two predicates don't change over time
-        # if fact[0] in ["inroom", "insource"] or fact[1] in ["inroom", "insource"]:
-        #     continue
+        # we assume these two predicates don't change over time or cannot be detected visually
+        invalid_preds = ["inroom", "insource", "inhand", "handempty"]
+        if fact[0] in invalid_preds or fact[1] in invalid_preds:
+            continue
 
         fact_nl = translate_fact_to_question(fact)
         facts_nl.append(fact_nl)
-    is_match_results = vlm_agent.ask(";".join(facts_nl), get_fpv_rgb())
+        valid_facts.append(fact)
+    print(facts_nl)
+    if len(facts_nl) > 0:
+        is_match_results = vlm_agent.ask(";".join(facts_nl), get_fpv_rgb())
+    else:
+        is_match_results = []
     for idx, is_match in enumerate(is_match_results):
-        if is_match == "no":
-            unmatches.append(facts[idx])
+        if idx < len(valid_facts) and (
+            (is_match == "no" and fact[0] != "not")
+            or (is_match == "yes" and fact[0] == "not")
+        ):
+            unmatches.append(valid_facts[idx])
             is_state_updated = True
 
     for unmatched_fact in unmatches:
-        states = update_states_by_fact(states, unmatched_fact)
-
-    updated_problem_file = write_states_into_problem(states, previous_problem)
+        updated_states = update_states_by_fact(states, unmatched_fact)
+    if is_state_updated:
+        updated_problem_file = write_states_into_problem(
+            updated_states, previous_problem
+        )
+    else:
+        updated_problem_file = write_states_into_problem(states, previous_problem)
     # updated_problem_file = previous_problem
     return is_state_updated, updated_problem_file
+
+
+def log_writer(message, log_file):
+    with open(log_file, "a+") as f:
+        f.write(message)
 
 
 # Load the config
@@ -652,21 +709,32 @@ og.sim.enable_viewer_camera_teleoperation()
 # run_sim_inf()
 ap = StarterSemanticActionPrimitives(env)
 planner = pddlsim(DOMAIN)
+
 vlm_agent = GPT4VAgent()
+
+# from claude3 import Claude3Agent
+# vlm_agent = Claude3Agent()
 
 init_problem_file = f"domains/{a_name}/problem.pddl"
 
-is_oracle = True
-
 exp_results = {"num_success": 0, "num_failed": 0}
 
-for _ in range(NUM_TRIALS):
+trial_counter = 0
+os.makedirs(LOG_DIR, exist_ok=True)
+run_dir = os.path.join(LOG_DIR, str(time.time()))
+os.makedirs(run_dir, exist_ok=False)
+
+while trial_counter < NUM_TRIALS:
+    trial_dir = os.path.join(run_dir, str(trial_counter))
+    os.makedirs(trial_dir, exist_ok=False)
     env.reset()
     watch_robot()
     obj_held = None
     filled = None
     inside_relationships = []
     sim_counter = 0
+    run_sim()
+    action_counter = 0
     # TODO: the episode initialization has some bug -- hard code something for now
     env.task.object_scope["mug.n.04_1"].set_position_orientation(
         position=[-7.62, -3.76, 0.66], orientation=[0, 0, 0, 1]
@@ -675,6 +743,7 @@ for _ in range(NUM_TRIALS):
 
     problem_file = init_problem_file
     terminate = False
+    invalid_epi = False
 
     while not terminate:
         # planning
@@ -682,6 +751,9 @@ for _ in range(NUM_TRIALS):
         if not plan:
             break
         # begin execution
+        intermediate_states = planner.get_intermediate_states(
+            problem_file, "pddl_output.txt"
+        )
         for action_step, action in enumerate(plan):
             primitive = action[0]
             action_params = format_action_params(action)
@@ -691,9 +763,7 @@ for _ in range(NUM_TRIALS):
                 # 2. ask each precondition using vlm
                 # 3. if a precondition is not satisfied, modify that in the intermediate state
                 # 4. breakout the loop, use intermediate state to generate new problem file
-                current_states = planner.get_intermediate_states(
-                    problem_file, "pddl_output.txt"
-                )[action_step]
+                current_states = intermediate_states[action_step]
                 preconditions = planner.get_preconditions_by_action(action)
                 unmatch, problem_file = check_states_and_update_problem(
                     current_states, preconditions, problem_file
@@ -702,10 +772,13 @@ for _ in range(NUM_TRIALS):
                     break
 
             if primitive == "find":
+                # if not goto(action_params[1], oracle=is_oracle):
+                #     # there is something wrong with the skill, not the agent's fault
+                #     invalid_epi = True
                 goto(action_params[1], oracle=is_oracle)
             elif primitive == "openit":
                 openit(action_params[1], oracle=is_oracle)
-            elif primitive == "graspfrom":
+            elif primitive == "grasp":
                 grasp(action_params[1], oracle=is_oracle)
             elif primitive == "fillsink":
                 fill_sink(action_params[1], oracle=is_oracle)
@@ -721,20 +794,26 @@ for _ in range(NUM_TRIALS):
                 turnon(action_params[1], oracle=is_oracle)
             else:
                 raise RuntimeError
+            action_counter += 1
 
+            # TODO: implement effect checking
             if CHECK_EFFECT:
-                current_states = planner.get_intermediate_states(
-                    problem_file, "pddl_output.txt"
-                )[action_step + 1]
-                effects = get_effects_by_action(action)
+                current_states = intermediate_states[action_step + 1]
+                effects = planner.get_effects_by_states(
+                    intermediate_states[action_step], current_states
+                )
                 unmatch, problem_file = check_states_and_update_problem(
                     current_states, effects, problem_file
                 )
                 if unmatch:
                     break
-
-            if action_step == len(plan) - 1:
+            if (
+                action_step == len(plan) - 1
+                or invalid_epi
+                or action_counter >= MAX_NUM_ACTION
+            ):
                 terminate = True
+                break
 
     # predefined
     # goto("cabinet.n.01_1", oracle=is_oracle)
@@ -751,23 +830,25 @@ for _ in range(NUM_TRIALS):
     # turnon("microwave.n.02_1", oracle=is_oracle)
 
     # check success condition
-    if (
-        env.task.object_scope["mug.n.04_1"]
-        .states[Filled]
-        .get_value(get_system("water"))
-        and ("mug.n.04_1", "microwave.n.02_1") in inside_relationships
-        and env.task.object_scope["microwave.n.02_1"].states[ToggledOn].get_value()
-    ):
-        print("success")
-        exp_results["num_success"] += 1
-    else:
-        print("failed")
-        exp_results["num_failed"] += 1
-    with open("exp_results.json", "w") as f:
-        json.dump(exp_results, f)
+    if not invalid_epi:
+        if (
+            env.task.object_scope["mug.n.04_1"]
+            .states[Filled]
+            .get_value(get_system("water"))
+            and ("mug.n.04_1", "microwave.n.02_1") in inside_relationships
+            and env.task.object_scope["microwave.n.02_1"].states[ToggledOn].get_value()
+        ):
+            print("success")
+            exp_results["num_success"] += 1
+        else:
+            print("failed")
+            exp_results["num_failed"] += 1
+        with open("exp_results.json", "w") as f:
+            json.dump(exp_results, f)
+        trial_counter += 1
 
 print("=" * 30)
 print("SUMMARY:")
 print(f"Number of success: {exp_results['num_success']}")
-print(f"Number of failure: {exp_results['num_success']}")
+print(f"Number of failure: {exp_results['num_failed']}")
 print("=" * 30)

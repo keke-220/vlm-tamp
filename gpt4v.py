@@ -10,7 +10,8 @@ class GPT4VAgent:
     def __init__(self):
         self.prompt = "prompts.txt"
         self.api_key = "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"
-        self.max_tokens = 10
+        # claude = "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"
+        self.max_tokens = 50
         # self.temperature = self.cfg["temperature"]
         self.to_pil = transforms.ToPILImage()
         self.errors = {}

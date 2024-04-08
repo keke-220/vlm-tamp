@@ -2,3 +2,7 @@
 sas_plan
 *.txt
 *.json
+*.pyc
+__pycache__/
+pddl_output.txt
+updated_problem.pddl

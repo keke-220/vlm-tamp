@@ -66,7 +66,9 @@ class pddlsim(object):
             if "Checking" in state:
                 int_states.append(init_states.copy())
             elif "Adding" in state:
-                init_states.append(" ".join(state.split(" ")[1:]))
+                formatted = " ".join(state.split(" ")[1:])
+                if formatted not in init_states:
+                    init_states.append(formatted)
             elif "Deleting" in state:
                 formatted = " ".join(state.split(" ")[1:])
                 if formatted in init_states:
@@ -74,6 +76,7 @@ class pddlsim(object):
             state_i += 1
         int_states.append(init_states.copy())
         # int_states.pop(0)
+        print(int_states)
         return int_states
 
     def get_preconditions_by_action(self, action):
@@ -84,8 +87,17 @@ class pddlsim(object):
         ].operands
         param_vars = [ac.parameters for ac in actions if ac.name == action_name][0]
         return self.reformat_fact_using_values(action, param_vars, preconditions)
-    
-    def get_effects_by_action(self, action):
+
+    def get_effects_by_states(self, prev_states, cur_states):
+        effects = []
+        # if facts got added:
+        for fact in cur_states:
+            if fact not in prev_states:
+                formatted_fact = fact.replace("(", "")
+                formatted_fact = formatted_fact.replace(")", "")
+                formatted_fact = formatted_fact.split(" ")
+                effects.append(formatted_fact)
+        return effects
         # action_name = action[0]
         # actions = [x for x in parse_domain(self.domain_file).actions]
         # effects = [ac.effect for ac in actions if ac.name == action_name][
@@ -95,7 +107,6 @@ class pddlsim(object):
         # return self.reformat_fact_using_values(action, param_vars, effects)
 
         # TODO: use state change to determine effects
-        pass
 
     def reformat_fact_using_values(self, action, param_vars, facts):
         action_params = action[1:-1]
@@ -103,9 +114,9 @@ class pddlsim(object):
 
         for fact in facts:
             reformat_pre = []
-            if not hasattr(fact, 'name'):
+            if not hasattr(fact, "name"):
                 fact = fact.argument
-                reformat_pre.append('not')
+                reformat_pre.append("not")
             predicate = fact.name
             reformat_pre.append(predicate)
             parameters = fact.terms
@@ -119,9 +130,4 @@ if __name__ == "__main__":
     p = "domains/boil_water_in_the_microwave/problem.pddl"
     p = "updated_problem.pddl"
     test = pddlsim("domains/boil_water_in_the_microwave/domain.pddl")
-    plan = test.plan(p)
-    for action in plan:
-        print(test.get_preconditions_by_action(action))
-    
-    print(plan)
-    # test.get_intermediate_states(p, "pddl_output.txt")
+    test.get_intermediate_states(p, "pddl_output.txt")
