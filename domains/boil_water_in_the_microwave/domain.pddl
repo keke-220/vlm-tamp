@@ -75,7 +75,7 @@
                 (?oo - object)
                 (when
                     (inside ?oo ?o)
-                    (inroom ?oo ?r))
+                    (and (inroom ?oo ?r) (inview ?a ?oo)))
             ))
     )
 
@@ -95,10 +95,4 @@
         :precondition (and (inview ?a ?m) (closed ?m) (inside ?o ?m) (filled ?o ?w)) ; this will potentially cause problem, where the robot will stuck at checking if the microwave has the cup inside
         :effect (and (turnedon ?m) (cooked ?w))
     )
-
-    ; (:action turnon_microwave
-    ;     :parameters (?a - agent ?m - microwave)
-    ;     :precondition (and (inview ?a ?m) (closed ?m))
-    ;     :effect (and (turnedon ?m))
-    ; )
 )

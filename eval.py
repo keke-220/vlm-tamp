@@ -2,6 +2,7 @@
 Example script demo'ing robot primitive to solve a task
 """
 
+import copy
 import random
 import os
 import json
@@ -56,13 +57,17 @@ MAX_ATTEMPTS_FOR_SAMPLING_POSE_WITH_OBJECT_AND_PREDICATE = 1000
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 100000
 PICK_OBJ_HEIGHT = 1.15
 DOMAIN = "domains/boil_water_in_the_microwave/domain.pddl"
-NUM_TRIALS = 50
-CHECK_PRECONDITION = False
+NUM_TRIALS = 30
+CHECK_PRECONDITION = True
 CHECK_EFFECT = True
 MAX_NUM_ACTION = 50
-MAX_TELEPORT_DIST = 0.5
-MIN_TELEPORT_DIST = 2.0
-ACTION_SUCCESS_PROB = 0.9
+MAX_TELEPORT_DIST = 1.0
+MIN_TELEPORT_DIST = 2.5
+OTHER_ACTION_SUCCESS_PROB = 1.0
+PICK_SUCCESS_PROB = 0.5
+PLACE_SUCCESS_PROB = 1.0
+OPEN_SUCCESS_PROB = 0.8
+CLOSE_SUCCESS_PROB = 0.8
 LOG_DIR = "datadump/"
 
 is_oracle = False
@@ -340,7 +345,7 @@ def turnon(obj, oracle=False):
             print("turn on object failed -- unsatisfied hidden preconditions")
             return
         prob = random.random()
-        if prob > ACTION_SUCCESS_PROB:
+        if prob > OTHER_ACTION_SUCCESS_PROB:
             print("action failed randomly")
             return
     env.task.object_scope[obj].states[ToggledOn].set_value(True)
@@ -354,7 +359,7 @@ def fill_sink(sink, oracle=False):
             print("filling sink failed -- unsatisfied hidden preconditions")
             return
         prob = random.random()
-        if prob > ACTION_SUCCESS_PROB:
+        if prob > OTHER_ACTION_SUCCESS_PROB:
             print("action failed randomly")
             return
     env.task.object_scope[sink].states[ToggledOn].set_value(True)
@@ -387,7 +392,7 @@ def grasp(obj_name="can_of_soda_89", oracle=False):
 
         # there is some probability that the grasp action will fail
         prob = random.random()
-        if prob > ACTION_SUCCESS_PROB:
+        if prob > PICK_SUCCESS_PROB:
             print("action failed randomly")
             return
 
@@ -435,7 +440,7 @@ def fill(container, sink, liquid="water", oracle=False):
             )
             return
         prob = random.random()
-        if prob > ACTION_SUCCESS_PROB:
+        if prob > OTHER_ACTION_SUCCESS_PROB:
             print("action failed randomly")
             return
     # system = get_system(liquid)
@@ -468,7 +473,7 @@ def openit(obj, oracle=False):
             print("opening object failed -- unsatisfied hidden preconditions")
             return
         prob = random.random()
-        if prob > ACTION_SUCCESS_PROB:
+        if prob > OPEN_SUCCESS_PROB:
             print("action failed randomly")
             return
     env.task.object_scope[obj].states[Open].set_value(True)
@@ -482,7 +487,7 @@ def closeit(obj, oracle=False):
             print("closing object failed -- unsatisfied hidden preconditions")
             return
         prob = random.random()
-        if prob > ACTION_SUCCESS_PROB:
+        if prob > CLOSE_SUCCESS_PROB:
             print("action failed randomly")
             return
     env.task.object_scope[obj].states[Open].set_value(False)
@@ -531,7 +536,7 @@ def place_with_predicate(
             )
             return
         prob = random.random()
-        if prob > ACTION_SUCCESS_PROB:
+        if prob > PLACE_SUCCESS_PROB:
             print("action failed randomly")
             return
     # Sample location to place object
@@ -569,7 +574,7 @@ def format_action_params(action):
 def translate_fact_to_question(fact):
     neg_suffix = " "
     if fact[0] == "not":
-        neg_suffix = " not "
+        # neg_suffix = " not "
         fact = fact[1:]
 
     predicate = fact[0]
@@ -584,6 +589,7 @@ def translate_fact_to_question(fact):
 
 
 def update_states_by_fact(states, fact):
+
     if fact[0] == "not":
         formatted_fact = f"(not ({fact[1]}"
         for param in fact[2:]:
@@ -616,46 +622,92 @@ def write_states_into_problem(states, previous_problem):
     return new_problem_name
 
 
-def check_states_and_update_problem(int_states, facts, previous_problem):
+def check_states_and_update_problem(
+    int_states, effs, pres, previous_problem, prev_states
+):
     states = int_states.copy()
-    unmatches = []
-    is_state_updated = False
+    unmatched_pres = []
+    unmatched_effs = []
+
+    is_state_updated_by_eff = False
+    is_state_updated_by_pre = False
+
     facts_nl = []
     valid_facts = []
-    for fact in facts:
+    facts = effs + pres
+    pre_start_idx = 0
+
+    for fact_id, fact in enumerate(facts):
 
         # TODO: need more discussions here
         # we assume these two predicates don't change over time or cannot be detected visually
-        invalid_preds = ["inroom", "insource", "inhand", "handempty"]
+        invalid_preds = [
+            "inroom",
+            "insource",
+            "inhand",
+            "handempty",
+            "cooked",
+            "filled",
+            "inside",
+            "turnedon",
+        ]
         if fact[0] in invalid_preds or fact[1] in invalid_preds:
             continue
 
         fact_nl = translate_fact_to_question(fact)
         facts_nl.append(fact_nl)
         valid_facts.append(fact)
-    print(facts_nl)
+
+        if fact_id < len(effs):
+            pre_start_idx += 1
+
+    print(f"Questions to VLMs: ")
+    print(f"current action effects: {facts_nl[:pre_start_idx]}")
+    print(f"next action preconditions: {facts_nl[pre_start_idx:]}")
+
     if len(facts_nl) > 0:
         is_match_results = vlm_agent.ask(";".join(facts_nl), get_fpv_rgb())
     else:
         is_match_results = []
     for idx, is_match in enumerate(is_match_results):
         if idx < len(valid_facts) and (
-            (is_match == "no" and fact[0] != "not")
-            or (is_match == "yes" and fact[0] == "not")
+            (("no" in is_match) and valid_facts[idx][0] != "not")
+            or (("yes" in is_match) and valid_facts[idx][0] == "not")
         ):
-            unmatches.append(valid_facts[idx])
-            is_state_updated = True
+            if idx < pre_start_idx:
+                unmatched_effs.append(valid_facts[idx])
+                is_state_updated_by_eff = True
+            else:
+                unmatched_pres.append(valid_facts[idx])
+                is_state_updated_by_pre = True
 
-    for unmatched_fact in unmatches:
-        updated_states = update_states_by_fact(states, unmatched_fact)
-    if is_state_updated:
-        updated_problem_file = write_states_into_problem(
-            updated_states, previous_problem
-        )
-    else:
+    if (not is_state_updated_by_pre) and (not is_state_updated_by_eff):
+        print("All facts match -- current states remain unchanged")
         updated_problem_file = write_states_into_problem(states, previous_problem)
+    else:
+        print(f"Here is a list of unmatched facts according to VLM's response --")
+        print(f"unmatched effs: {unmatched_effs}")
+        print(f"unmatched pres: {unmatched_pres}")
+
+    if CHECK_EFFECT and is_state_updated_by_eff:
+        print(
+            "updating problem with previous states based on effects mismatch,"
+            + " and will suggest to re-execute the current skill if needed"
+        )
+        updated_problem_file = write_states_into_problem(prev_states, previous_problem)
+    elif CHECK_PRECONDITION and is_state_updated_by_pre:
+        print(
+            "updating states based on preconditions mismatch, and will suggest to replan if needed"
+        )
+        for unmatched_fact in unmatched_pres:
+            print(f"Previous states: {states}")
+            states = update_states_by_fact(states, unmatched_fact)
+            print(f"Updated states: {states}")
+        updated_problem_file = write_states_into_problem(states, previous_problem)
+
     # updated_problem_file = previous_problem
-    return is_state_updated, updated_problem_file
+    breakpoint()
+    return (is_state_updated_by_eff or is_state_updated_by_pre), updated_problem_file
 
 
 def log_writer(message, log_file):
@@ -706,6 +758,7 @@ robot = env.robots[0]
 robot_init_z = robot.get_position()[2]
 # Allow user to move camera more easily
 og.sim.enable_viewer_camera_teleoperation()
+og.sim.set_lighting_mode("Default")
 # run_sim_inf()
 ap = StarterSemanticActionPrimitives(env)
 planner = pddlsim(DOMAIN)
@@ -748,6 +801,7 @@ while trial_counter < NUM_TRIALS:
     while not terminate:
         # planning
         plan = planner.plan(problem_file)
+        print(f"Planning -- {plan}")
         if not plan:
             break
         # begin execution
@@ -757,19 +811,19 @@ while trial_counter < NUM_TRIALS:
         for action_step, action in enumerate(plan):
             primitive = action[0]
             action_params = format_action_params(action)
-
-            if CHECK_PRECONDITION:
-                # 1. given an action, get all the preconditions formatted as NL
-                # 2. ask each precondition using vlm
-                # 3. if a precondition is not satisfied, modify that in the intermediate state
-                # 4. breakout the loop, use intermediate state to generate new problem file
-                current_states = intermediate_states[action_step]
-                preconditions = planner.get_preconditions_by_action(action)
-                unmatch, problem_file = check_states_and_update_problem(
-                    current_states, preconditions, problem_file
-                )
-                if unmatch:
-                    break
+            print(f"Executing action: {action}")
+            # if CHECK_PRECONDITION:
+            #     # 1. given an action, get all the preconditions formatted as NL
+            #     # 2. ask each precondition using vlm
+            #     # 3. if a precondition is not satisfied, modify that in the intermediate state
+            #     # 4. breakout the loop, use intermediate state to generate new problem file
+            #     current_states = intermediate_states[action_step]
+            #     preconditions = planner.get_preconditions_by_action(action)
+            #     unmatch, problem_file = check_states_and_update_problem(
+            #         current_states, preconditions, problem_file, replan=True
+            #     )
+            #     if unmatch:
+            #         break
 
             if primitive == "find":
                 # if not goto(action_params[1], oracle=is_oracle):
@@ -796,17 +850,30 @@ while trial_counter < NUM_TRIALS:
                 raise RuntimeError
             action_counter += 1
 
-            # TODO: implement effect checking
-            if CHECK_EFFECT:
+            if CHECK_EFFECT or CHECK_PRECONDITION:
                 current_states = intermediate_states[action_step + 1]
+                # current action effect
                 effects = planner.get_effects_by_states(
                     intermediate_states[action_step], current_states
                 )
+                # next action precondition
+                if len(plan) > action_step + 1:
+                    preconditions = planner.get_preconditions_by_action(
+                        plan[action_step + 1]
+                    )
+                else:
+                    preconditions = []
+
                 unmatch, problem_file = check_states_and_update_problem(
-                    current_states, effects, problem_file
+                    current_states,
+                    effects,
+                    preconditions,
+                    problem_file,
+                    intermediate_states[action_step],
                 )
                 if unmatch:
                     break
+
             if (
                 action_step == len(plan) - 1
                 or invalid_epi

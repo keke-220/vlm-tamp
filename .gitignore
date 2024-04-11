@@ -1,6 +1,5 @@
 *.png
 sas_plan
-*.txt
 *.json
 *.pyc
 __pycache__/

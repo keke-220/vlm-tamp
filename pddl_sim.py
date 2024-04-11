@@ -2,7 +2,7 @@ import os
 import subprocess
 from pddl import parse_domain, parse_problem
 
-FAST_DOWNWARD_ALIAS = "lama-first"
+FAST_DOWNWARD_ALIAS = "seq-opt-fdss-1"
 TIME_LIMIT = 10
 
 
@@ -17,7 +17,7 @@ class pddlsim(object):
         try:
             output = subprocess.check_output(
                 f"python ./downward/fast-downward.py --alias {FAST_DOWNWARD_ALIAS} "
-                # + f"--search-time-limit {TIME_LIMIT} "
+                + f"--search-time-limit {TIME_LIMIT} "
                 + "--plan-file pddl_output.txt "
                 # + f"--sas-file aaa.sas "
                 + f"{self.domain_file} {problem_file}",
@@ -76,7 +76,6 @@ class pddlsim(object):
             state_i += 1
         int_states.append(init_states.copy())
         # int_states.pop(0)
-        print(int_states)
         return int_states
 
     def get_preconditions_by_action(self, action):
@@ -96,6 +95,14 @@ class pddlsim(object):
                 formatted_fact = fact.replace("(", "")
                 formatted_fact = formatted_fact.replace(")", "")
                 formatted_fact = formatted_fact.split(" ")
+                effects.append(formatted_fact)
+        # if facts got removed:
+        for fact in prev_states:
+            if fact not in cur_states:
+                formatted_fact = fact.replace("(", "")
+                formatted_fact = formatted_fact.replace(")", "")
+                formatted_fact = formatted_fact.split(" ")
+                formatted_fact.insert(0, 'not')
                 effects.append(formatted_fact)
         return effects
         # action_name = action[0]
@@ -130,4 +137,5 @@ if __name__ == "__main__":
     p = "domains/boil_water_in_the_microwave/problem.pddl"
     p = "updated_problem.pddl"
     test = pddlsim("domains/boil_water_in_the_microwave/domain.pddl")
+    test.plan(p)
     test.get_intermediate_states(p, "pddl_output.txt")

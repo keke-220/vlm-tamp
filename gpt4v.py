@@ -6,6 +6,7 @@ import requests
 import numpy as np
 import time
 
+
 class GPT4VAgent:
     def __init__(self):
         self.prompt = "prompts.txt"
@@ -37,6 +38,7 @@ class GPT4VAgent:
     def _prepare_samples(self, obs, questions, debug_path=None):
         context_messages = []
         pil_image = Image.fromarray(obs)
+        pil_image = pil_image.resize((256, 256))
         image_bytes = io.BytesIO()
         # if debug_path:
         #     round_path = os.path.join(debug_path, str(self.current_round))
@@ -78,7 +80,7 @@ class GPT4VAgent:
         elif "error" in json_res:
             self.errors[self.current_round] = json_res
             res = "gpt4v API error"
-            if json_res['error']['code'] == 'rate_limit_exceeded':
+            if json_res["error"]["code"] == "rate_limit_exceeded":
                 time.sleep(10)
                 return res, True
             else:
@@ -102,7 +104,7 @@ class GPT4VAgent:
         retry = True
         while retry:
             ans, retry = self._request_gpt4v(chat_input)
-        ans = ans.lower().split(';')
+        ans = ans.lower().split(";")
         # if 'no' in ans:
         #     return False
         # return True
