@@ -5,9 +5,9 @@
     (:types
         movable liquid furniture room agent - object
 
-        mug - movable
+        mug pie - movable
         water - liquid
-        cabinet sink floor microwave - furniture
+        electric_refrigerator oven cabinet sink floor microwave - furniture
 
         kitchen - room
 
@@ -17,6 +17,9 @@
         sink-n-01 - sink
         floor-n-01 - floor
         microwave-n-02 - microwave
+        pie-n-01 - pie
+        oven-n-01 - oven
+        electric_refrigerator-n-01 - electric_refrigerator
 
         agent-n-01 - agent
     )
@@ -33,6 +36,8 @@
         (turnedon ?o - object)
         (cooked ?o - object)
         (found ?a - agent ?o - object)
+        (frozen ?o - object)
+        (hot ?o - object)
     )
 
     (:action find
@@ -88,6 +93,7 @@
                 (when
                     (inside ?oo ?o)
                     (not (inroom ?oo ?r)))
+                    ; (and (not (inroom ?oo ?r)) (not (inview ?a ?oo))))
             ))
     )
 
@@ -95,5 +101,11 @@
         :parameters (?a - agent ?m - microwave ?o - movable ?w - water)
         :precondition (and (inview ?a ?m) (found ?a ?m) (closed ?m) (inside ?o ?m) (filled ?o ?w)) ; this will potentially cause problem, where the robot will stuck at checking if the microwave has the cup inside
         :effect (and (turnedon ?m) (cooked ?w))
+    )
+
+    (:action heat_food_with_oven
+        :parameters (?a - agent ?v - oven ?f - object)
+        :precondition (and (inview ?a ?v) (found ?a ?v) (inside ?f ?v))
+        :effect (and (hot ?f) (turnedon ?v))
     )
 )

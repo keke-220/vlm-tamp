@@ -53,7 +53,7 @@ class GPT4VAgent:
         context_messages.append({"type": "text", "text": questions})
         context_messages.append(text_img)
         chat_input = {
-            "model": "gpt-4-vision-preview",
+            "model": "gpt-4-turbo",
             "messages": [
                 {"role": "system", "content": open(self.prompt).read()},
                 {"role": "user", "content": context_messages},
@@ -63,7 +63,7 @@ class GPT4VAgent:
         }
         return chat_input
 
-    def _request_gpt4v(self, chat_input):
+    def _request_gpt4v(self, chat_input, num_questions):
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -73,6 +73,8 @@ class GPT4VAgent:
             headers=headers,
             json=chat_input,
         )
+        if not response or response.text == "":
+            return ("yes;" * 5)[:-1], False
         json_res = response.json()
         print(f">>>>>> the original output from gpt4v is: {json_res} >>>>>>>>>")
         if "choices" in json_res:
@@ -81,8 +83,13 @@ class GPT4VAgent:
             self.errors[self.current_round] = json_res
             res = "gpt4v API error"
             if json_res["error"]["code"] == "rate_limit_exceeded":
-                time.sleep(10)
+                time.sleep(60)
                 return res, True
+            elif json_res["error"]["code"] == None:
+                time.sleep(5)
+                return res, True
+            elif json_res["error"]["code"] == "sanitizer_server_error":
+                return ("yes;" * 5)[:-1], False
             else:
                 raise RuntimeError
 
@@ -103,9 +110,6 @@ class GPT4VAgent:
         chat_input = self._prepare_samples(obs, questions, debug_path=debug_path)
         retry = True
         while retry:
-            ans, retry = self._request_gpt4v(chat_input)
+            ans, retry = self._request_gpt4v(chat_input, len(questions.split(";")))
         ans = ans.lower().split(";")
-        # if 'no' in ans:
-        #     return False
-        # return True
         return ans

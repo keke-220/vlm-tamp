@@ -24,6 +24,7 @@ class pddlsim(object):
                 shell=True,
             )
         except subprocess.CalledProcessError:
+            print ("something went wrong")
             return None
         output = output.decode("utf-8").split("\n")
         start_index = next(
@@ -102,7 +103,7 @@ class pddlsim(object):
                 formatted_fact = fact.replace("(", "")
                 formatted_fact = formatted_fact.replace(")", "")
                 formatted_fact = formatted_fact.split(" ")
-                formatted_fact.insert(0, 'not')
+                formatted_fact.insert(0, "not")
                 effects.append(formatted_fact)
         return effects
         # action_name = action[0]
@@ -134,8 +135,10 @@ class pddlsim(object):
 
 
 if __name__ == "__main__":
-    p = "domains/boil_water_in_the_microwave/problem.pddl"
-    p = "updated_problem.pddl"
-    test = pddlsim("domains/boil_water_in_the_microwave/domain.pddl")
+    task = "domains/boil_water_in_the_microwave/"
+    task = "domains/cook_a_frozen_pie/"
+    p = task + "problem.pddl"
+    # p = "updated_problem.pddl"
+    test = pddlsim(task + "domain.pddl")
     test.plan(p)
-    test.get_intermediate_states(p, "pddl_output.txt")
+    # test.get_intermediate_states(p, "pddl_output.txt")

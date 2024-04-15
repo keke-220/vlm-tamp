@@ -10,12 +10,15 @@ import time
 import yaml
 import numpy as np
 import omnigibson as og
+import matplotlib.pyplot as plt
+import cv2
 from omnigibson import object_states
 from PIL import Image
 from omnigibson.macros import gm
 from omnigibson.utils.constants import CLASS_NAME_TO_CLASS_ID
 from pddl_sim import pddlsim
 from gpt4v import GPT4VAgent
+from gemini import GeminiAgent
 
 # from omnigibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives, StarterSemanticActionPrimitiveSet
 # Don't use GPU dynamics and use flatcache for performance boost
@@ -56,10 +59,9 @@ PREDICATE_SAMPLING_Z_OFFSET = 0.02
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_WITH_OBJECT_AND_PREDICATE = 1000
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 100000
 PICK_OBJ_HEIGHT = 1.15
-DOMAIN = "domains/boil_water_in_the_microwave/domain.pddl"
-NUM_TRIALS = 30
-CHECK_PRECONDITION = True
-CHECK_EFFECT = True
+NUM_TRIALS = 50
+CHECK_PRECONDITION = False
+CHECK_EFFECT = False
 MAX_NUM_ACTION = 50
 MAX_TELEPORT_DIST = 1.0
 MIN_TELEPORT_DIST = 2.5
@@ -68,6 +70,7 @@ PICK_SUCCESS_PROB = 0.5
 PLACE_SUCCESS_PROB = 1.0
 OPEN_SUCCESS_PROB = 0.8
 CLOSE_SUCCESS_PROB = 0.8
+OPEN_FULLY = True
 LOG_DIR = "datadump/"
 
 is_oracle = False
@@ -217,6 +220,10 @@ def _sample_pose_with_object_and_predicate(
 
 def get_fpv_rgb():
     return robot.get_obs()["fetch:eyes_Camera_sensor"]["rgb"]
+
+
+def get_tpv_rgb():
+    return og.sim.viewer_camera.get_obs()["rgb"]
 
 
 def get_seg_semantic():
@@ -409,7 +416,7 @@ def grasp(obj_name="can_of_soda_89", oracle=False):
     # global
     # if filled
     # system.remove_all_particles()
-    run_sim()
+    run_sim(50)
     # manually remove this if it exists in our relationship tracker
     global inside_relationships
     for in_obj, recep in inside_relationships:
@@ -476,7 +483,7 @@ def openit(obj, oracle=False):
         if prob > OPEN_SUCCESS_PROB:
             print("action failed randomly")
             return
-    env.task.object_scope[obj].states[Open].set_value(True)
+    env.task.object_scope[obj].states[Open].set_value(True, fully=OPEN_FULLY)
     run_sim()
 
 
@@ -650,6 +657,7 @@ def check_states_and_update_problem(
             "filled",
             "inside",
             "turnedon",
+            "found",
         ]
         if fact[0] in invalid_preds or fact[1] in invalid_preds:
             continue
@@ -705,9 +713,20 @@ def check_states_and_update_problem(
             print(f"Updated states: {states}")
         updated_problem_file = write_states_into_problem(states, previous_problem)
 
-    # updated_problem_file = previous_problem
-    breakpoint()
-    return (is_state_updated_by_eff or is_state_updated_by_pre), updated_problem_file
+    return (
+        (is_state_updated_by_eff or is_state_updated_by_pre),
+        updated_problem_file,
+        {
+            "fpv": get_fpv_rgb(),
+            "tpv": get_tpv_rgb(),
+            "eff_queries": facts_nl[:pre_start_idx],
+            "pre_queries": facts_nl[pre_start_idx:],
+            "eff_ans": is_match_results[:pre_start_idx],
+            "pre_ans": is_match_results[pre_start_idx:],
+            "eff_mismatch": is_state_updated_by_eff,
+            "pre_mismatch": is_state_updated_by_pre,
+        },
+    )
 
 
 def log_writer(message, log_file):
@@ -719,19 +738,28 @@ def log_writer(message, log_file):
 # config_filename = os.path.join(og.example_config_path, "tiago_primitives.yaml")
 config_filename = os.path.join(og.example_config_path, "fetch_behavior.yaml")
 config = yaml.load(open(config_filename, "r"), Loader=yaml.FullLoader)
-
-# Update it to run a grocery shopping task
-config["scene"]["scene_model"] = "Beechwood_0_int"
 config["scene"]["load_task_relevant_only"] = True
 config["scene"]["not_load_object_categories"] = ["ceilings"]
 
+#########################################################################################
+
+# BOIL WATER IN THE MICROWAVE
+config["scene"]["scene_model"] = "Beechwood_0_int"
 a_name = "boil_water_in_the_microwave"
-# find task by name
-# for scenes in os.listdir('/home/xiaohan/OmniGibson/omnigibson/data/og_dataset/scenes/'):
-#     for js in os.listdir(os.path.join('/home/xiaohan/OmniGibson/omnigibson/data/og_dataset/scenes/', scenes, 'json')):
-#         if a_name in js:
-#             print (scenes)
-#             print (js)
+
+# a_name = "halve_an_egg"
+# config["scene"]["scene_model"] = "Benevolence_1_int"
+
+# a_name = "bringing_water"
+# config["scene"]["scene_model"] = "house_single_floor"
+
+# a_name = "store_beer"
+# config["scene"]["scene_model"] = "Ihlen_1_int"
+
+a_name = "cook_a_frozen_pie"
+config["scene"]["scene_model"] = "Beechwood_0_int"
+
+#########################################################################################
 
 config["task"] = {
     "type": "BehaviorTask",
@@ -761,10 +789,11 @@ og.sim.enable_viewer_camera_teleoperation()
 og.sim.set_lighting_mode("Default")
 # run_sim_inf()
 ap = StarterSemanticActionPrimitives(env)
-planner = pddlsim(DOMAIN)
+domain_file = f"domains/{a_name}/domain.pddl"
+planner = pddlsim(domain_file)
 
 vlm_agent = GPT4VAgent()
-
+# vlm_agent = GeminiAgent()
 # from claude3 import Claude3Agent
 # vlm_agent = Claude3Agent()
 
@@ -777,6 +806,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 run_dir = os.path.join(LOG_DIR, str(time.time()))
 os.makedirs(run_dir, exist_ok=False)
 
+
 while trial_counter < NUM_TRIALS:
     trial_dir = os.path.join(run_dir, str(trial_counter))
     os.makedirs(trial_dir, exist_ok=False)
@@ -788,10 +818,18 @@ while trial_counter < NUM_TRIALS:
     sim_counter = 0
     run_sim()
     action_counter = 0
-    # TODO: the episode initialization has some bug -- hard code something for now
-    env.task.object_scope["mug.n.04_1"].set_position_orientation(
-        position=[-7.62, -3.76, 0.66], orientation=[0, 0, 0, 1]
-    )
+
+    if a_name == "boil_water_in_the_microwave":
+        # TODO: the episode initialization has some bug -- hard code something for now
+        env.task.object_scope["mug.n.04_1"].set_position_orientation(
+            position=[-7.62, -3.76, 0.66], orientation=[0, 0, 0, 1]
+        )
+    if a_name == "cook_a_frozen_pie":
+        env.task.object_scope["oven.n.01_1"].disable_gravity()
+        run_sim()
+        env.task.object_scope["oven.n.01_1"].states[Open].set_value(False)
+        run_sim()
+        env.task.object_scope["oven.n.01_1"].states[Open].set_value(False)
     run_sim()
 
     problem_file = init_problem_file
@@ -812,18 +850,6 @@ while trial_counter < NUM_TRIALS:
             primitive = action[0]
             action_params = format_action_params(action)
             print(f"Executing action: {action}")
-            # if CHECK_PRECONDITION:
-            #     # 1. given an action, get all the preconditions formatted as NL
-            #     # 2. ask each precondition using vlm
-            #     # 3. if a precondition is not satisfied, modify that in the intermediate state
-            #     # 4. breakout the loop, use intermediate state to generate new problem file
-            #     current_states = intermediate_states[action_step]
-            #     preconditions = planner.get_preconditions_by_action(action)
-            #     unmatch, problem_file = check_states_and_update_problem(
-            #         current_states, preconditions, problem_file, replan=True
-            #     )
-            #     if unmatch:
-            #         break
 
             if primitive == "find":
                 # if not goto(action_params[1], oracle=is_oracle):
@@ -846,9 +872,20 @@ while trial_counter < NUM_TRIALS:
                 closeit(action_params[1], oracle=is_oracle)
             elif primitive == "microwave_water":
                 turnon(action_params[1], oracle=is_oracle)
+            elif primitive == "heat_food_with_oven":
+                turnon(action_params[1], oracle=is_oracle)
             else:
                 raise RuntimeError
+
             action_counter += 1
+
+            if (
+                action_step == len(plan) - 1
+                or invalid_epi
+                or action_counter > MAX_NUM_ACTION
+            ):
+                terminate = True
+                break
 
             if CHECK_EFFECT or CHECK_PRECONDITION:
                 current_states = intermediate_states[action_step + 1]
@@ -864,52 +901,79 @@ while trial_counter < NUM_TRIALS:
                 else:
                     preconditions = []
 
-                unmatch, problem_file = check_states_and_update_problem(
+                unmatch, problem_file, obs_log = check_states_and_update_problem(
                     current_states,
                     effects,
                     preconditions,
                     problem_file,
                     intermediate_states[action_step],
                 )
+
+                # visualization
+                from matplotlib import gridspec
+
+                fig = plt.figure(figsize=(20, 10))
+                fig.suptitle(f"Step: {action_counter-1}", fontsize=20)
+                spec = gridspec.GridSpec(
+                    ncols=2, nrows=1, width_ratios=[1, 2], wspace=0.5
+                )
+
+                ax0 = fig.add_subplot(spec[0])
+                ax0.imshow(cv2.resize(obs_log["fpv"], (512, 512)))
+                ax0.set_title("First Person View", fontsize=15)
+                label = f"Current: {action}"
+                for query_idx, query in enumerate(obs_log["eff_queries"]):
+                    label += f"\nEffect {query_idx+1}: {query}"
+                    label += f"\nAnswer: {obs_log['eff_ans'][query_idx]}"
+                label += f"\nMismatch: {obs_log['eff_mismatch']}"
+                ax0.set_xlabel(label, fontsize=15)
+
+                if len(plan) > action_step + 1:
+                    ax1 = fig.add_subplot(spec[1])
+                    ax1.imshow(cv2.resize(obs_log["tpv"], (1024, 512)))
+                    ax1.set_title("Third Person View", fontsize=15)
+                    label = f"Next: {plan[action_step + 1]}"
+                    for query_idx, query in enumerate(obs_log["pre_queries"]):
+                        label += f"\nPrecondition {query_idx+1}: {query}"
+                        label += f"\nAnswer: {obs_log['pre_ans'][query_idx]}"
+                    label += f"\nMismatch: {obs_log['pre_mismatch']}"
+                    ax1.set_xlabel(label, fontsize=15)
+                    fig.tight_layout()
+                    plt.savefig(os.path.join(trial_dir, f"{action_counter-1}.png"))
+
                 if unmatch:
                     break
 
-            if (
-                action_step == len(plan) - 1
-                or invalid_epi
-                or action_counter >= MAX_NUM_ACTION
-            ):
-                terminate = True
-                break
-
-    # predefined
-    # goto("cabinet.n.01_1", oracle=is_oracle)
-    # openit("cabinet.n.01_1", oracle=is_oracle)
-    # goto("mug.n.04_1", oracle=is_oracle)
-    # grasp("mug.n.04_1", oracle=is_oracle)
-    # goto("sink.n.01_1", oracle=is_oracle)
-    # fill_sink("sink.n.01_1", oracle=is_oracle)
-    # fill("mug.n.04_1", "sink.n.01_1", oracle=is_oracle)
-    # goto("microwave.n.02_1", oracle=is_oracle)
-    # openit("microwave.n.02_1", oracle=is_oracle)
-    # place_with_predicate("mug.n.04_1", "microwave.n.02_1", Inside, oracle=is_oracle)
-    # closeit("microwave.n.02_1", oracle=is_oracle)
-    # turnon("microwave.n.02_1", oracle=is_oracle)
-
     # check success condition
     if not invalid_epi:
-        if (
-            env.task.object_scope["mug.n.04_1"]
-            .states[Filled]
-            .get_value(get_system("water"))
-            and ("mug.n.04_1", "microwave.n.02_1") in inside_relationships
-            and env.task.object_scope["microwave.n.02_1"].states[ToggledOn].get_value()
-        ):
-            print("success")
-            exp_results["num_success"] += 1
-        else:
-            print("failed")
-            exp_results["num_failed"] += 1
+        if a_name == "boil_water_in_the_microwave":
+            if (
+                env.task.object_scope["mug.n.04_1"]
+                .states[Filled]
+                .get_value(get_system("water"))
+                and ("mug.n.04_1", "microwave.n.02_1") in inside_relationships
+                and env.task.object_scope["microwave.n.02_1"]
+                .states[ToggledOn]
+                .get_value()
+            ):
+                print("success")
+                exp_results["num_success"] += 1
+            else:
+                print("failed")
+                exp_results["num_failed"] += 1
+        elif a_name == "cook_a_frozen_pie":
+            if (
+                "pie.n.01_1",
+                "oven.n.01_1",
+            ) in inside_relationships and env.task.object_scope["oven.n.01_1"].states[
+                ToggledOn
+            ].get_value():
+                print("success")
+                exp_results["num_success"] += 1
+            else:
+                print("failed")
+                exp_results["num_failed"] += 1
+            # env.task.object_scope["pie.n.01_1"].states[Inside].get_value(env.task.object_scope["oven.n.01_1"])
         with open("exp_results.json", "w") as f:
             json.dump(exp_results, f)
         trial_counter += 1
