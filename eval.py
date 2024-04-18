@@ -55,29 +55,55 @@ from omnigibson.systems import (
     is_visual_particle_system,
 )
 
+IMPERCEIVABLE_PREDS = [
+    "inroom",
+    "insource",
+    "inhand",
+    "handempty",
+    "cooked",
+    "filled",
+    "inside",
+    "turnedon",
+    "found",
+    "filledsink",
+    "hot",
+]
+GT_PREDS = ["handempty", "inhand", "filled", "inside"]
 PREDICATE_SAMPLING_Z_OFFSET = 0.02
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_WITH_OBJECT_AND_PREDICATE = 1000
-MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 100000
+MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 1000
 PICK_OBJ_HEIGHT = 1.15
-NUM_TRIALS = 50
-CHECK_PRECONDITION = False
-CHECK_EFFECT = False
+PLACE_ON_FLOOR_DIST = 1.5
+FALL_ON_FLOOR_DIST = 1.5
+NUM_TRIALS = 10
+CHECK_PRECONDITION = True
+CHECK_EFFECT = True
 MAX_NUM_ACTION = 50
-MAX_TELEPORT_DIST = 1.0
-MIN_TELEPORT_DIST = 2.5
-OTHER_ACTION_SUCCESS_PROB = 1.0
-PICK_SUCCESS_PROB = 0.5
-PLACE_SUCCESS_PROB = 1.0
+MAX_TELEPORT_DIST = 2.5
+MIN_TELEPORT_DIST = 1.0
+
+# action probs
+OTHER_ACTION_SUCCESS_PROB = 0.9
+NAV_SUCCESS_PROB = 0.8
+PICK_SUCCESS_PROB = 0.5  # TODO: change
+PLACE_SUCCESS_PROB = 0.5
 OPEN_SUCCESS_PROB = 0.8
 CLOSE_SUCCESS_PROB = 0.8
+HALVE_SUCCESS_PROB = 0.5
+PLACE_ON_FLOOR_SUCCESS_PROB = 0.8
+# for action fill, grasp and place, there is a probability that the object will fall on the floor
+FALL_ON_GROUND_PROB_IF_FAILED = 0.5  # TODO: change
+
 OPEN_FULLY = True
 LOG_DIR = "datadump/"
 
 is_oracle = False
 
-obj_held = None
-filled = None
-inside_relationships = []
+# remember to reset them for new episode!!!
+# obj_held = None
+# filled = None
+# inside_relationships = []
+# onfloor_relationships = []
 
 
 def get_class_name_from_class_id(target_class_id):
@@ -319,36 +345,55 @@ def goto(obj_name="can_of_soda_89", oracle=False):
 
     # preconditions
     # TODO:the object and robot should be in the same room?
+    inview_obj = False
+    while not inview_obj:
+        # execution
+        robot.tuck()
+        run_sim()
+        obj = env.task.object_scope[obj_name].wrapped_obj
+        xyt = sample_teleport_pose_near_object(ap, obj)
+        if xyt is None:
+            print("there is no free space near the object -- action failed")
+            return False
+        pos = np.empty([3])
+        pos[2] = robot_init_z
+        pos[1] = xyt[1]
+        pos[0] = xyt[0]
+        orien = yaw_to_quaternion(xyt[2])
+        robot.set_position_orientation(pos, orien)
+        global obj_held
+        if obj_held:
+            print("there is an object in hand -- moving this object as well")
+            obj_held.set_position([pos[0], pos[1], PICK_OBJ_HEIGHT])
+        watch_robot()
+        lookat(obj_name)
+        robot.tuck()
+        run_sim()
 
-    # execution
-    robot.tuck()
-    run_sim()
-    obj = env.task.object_scope[obj_name].wrapped_obj
-    xyt = sample_teleport_pose_near_object(ap, obj)
-    if xyt is None:
-        print("there is no free space near the object -- action failed")
-        return False
-    pos = np.empty([3])
-    pos[2] = robot_init_z
-    pos[1] = xyt[1]
-    pos[0] = xyt[0]
-    orien = yaw_to_quaternion(xyt[2])
-    robot.set_position_orientation(pos, orien)
-    global obj_held
-    if obj_held:
-        print("there is an object in hand -- moving this object as well")
-        obj_held.set_position([pos[0], pos[1], PICK_OBJ_HEIGHT])
-    watch_robot()
-    lookat(obj_name)
-    robot.tuck()
-    run_sim()
+        if not oracle:  # there is a chance that object in hand will fall
+            prob = random.random()
+            if prob > NAV_SUCCESS_PROB:
+                print("action failed randomly")
+                fall_prob = random.random()
+                if fall_prob < FALL_ON_GROUND_PROB_IF_FAILED and obj_held:
+                    # object falls on ground
+                    print("object falls on ground")
+                    # fall(obj_name)
+                    obj_in_hand_name = [
+                        k
+                        for k, v in env.task.object_scope.items()
+                        if v.wrapped_obj == obj_held
+                    ][0]
+                    fall(obj_in_hand_name)
+            break
+        inview_obj = inview(obj_name)
+
     return True
 
 
 def turnon(obj, oracle=False):
     if not oracle:
         if not inview(obj):
-            # breakpoint()
             print("turn on object failed -- unsatisfied hidden preconditions")
             return
         prob = random.random()
@@ -362,7 +407,6 @@ def turnon(obj, oracle=False):
 def fill_sink(sink, oracle=False):
     if not oracle:
         if not inview(sink):
-            # breakpoint()
             print("filling sink failed -- unsatisfied hidden preconditions")
             return
         prob = random.random()
@@ -373,6 +417,39 @@ def fill_sink(sink, oracle=False):
     run_sim(step=40)
     env.task.object_scope[sink].states[ToggledOn].set_value(False)
     run_sim()
+
+
+def fall(obj_name):
+    obj = env.task.object_scope[obj_name].wrapped_obj
+    obj.set_position_orientation(
+        position=np.array(
+            [
+                np.random.uniform(-FALL_ON_FLOOR_DIST, FALL_ON_FLOOR_DIST),
+                np.random.uniform(-FALL_ON_FLOOR_DIST, FALL_ON_FLOOR_DIST),
+                0.5,
+            ]
+        )
+        + robot.get_position(),
+        orientation=robot.get_orientation(),
+    )
+    obj.enable_gravity()
+    run_sim(50)
+
+    global obj_held
+    if obj == obj_held:
+        obj_held = None
+        global filled
+        filled = None
+
+    global inside_relationships
+    for in_obj, recep in inside_relationships:
+        if in_obj == obj_name:
+            inside_relationships.remove((in_obj, recep))
+            break
+
+    global onfloor_relationships
+    if obj_name not in onfloor_relationships:
+        onfloor_relationships.append(obj_name)
 
 
 def grasp(obj_name="can_of_soda_89", oracle=False):
@@ -391,7 +468,6 @@ def grasp(obj_name="can_of_soda_89", oracle=False):
 
         # check if object is in the field of view -- assuming vision-based grasping
         if not inview(obj_name):
-            # breakpoint()
             print(
                 "grasp object failed because of the object not in the view -- unsatisfied hidden preconditions"
             )
@@ -401,6 +477,11 @@ def grasp(obj_name="can_of_soda_89", oracle=False):
         prob = random.random()
         if prob > PICK_SUCCESS_PROB:
             print("action failed randomly")
+            fall_prob = random.random()
+            if fall_prob < FALL_ON_GROUND_PROB_IF_FAILED:
+                # object falls on ground
+                print("object falls on ground")
+                fall(obj_name)
             return
 
     obj = env.task.object_scope[obj_name].wrapped_obj
@@ -412,6 +493,7 @@ def grasp(obj_name="can_of_soda_89", oracle=False):
     )
     # obj.set_orientation([0,0,0,1])
     obj_held = obj
+    obj.keep_still()
     obj.disable_gravity()
     # global
     # if filled
@@ -423,7 +505,9 @@ def grasp(obj_name="can_of_soda_89", oracle=False):
         if in_obj == obj_name:
             inside_relationships.remove((in_obj, recep))
             break
-
+    global onfloor_relationships
+    if obj_name in onfloor_relationships:
+        onfloor_relationships.remove(obj_name)
     return
 
 
@@ -441,7 +525,6 @@ def fill(container, sink, liquid="water", oracle=False):
             )
             return
         if not inview(sink):
-            # breakpoint()
             print(
                 "filling container near source failed -- unsatisfied hidden preconditions"
             )
@@ -449,6 +532,11 @@ def fill(container, sink, liquid="water", oracle=False):
         prob = random.random()
         if prob > OTHER_ACTION_SUCCESS_PROB:
             print("action failed randomly")
+            fall_prob = random.random()
+            if fall_prob < FALL_ON_GROUND_PROB_IF_FAILED:
+                # object falls on ground
+                print("object falls on ground")
+                fall(container)
             return
     # system = get_system(liquid)
 
@@ -476,7 +564,6 @@ def openit(obj, oracle=False):
     # check if object is in the field of view -- effects
     if not oracle:
         if not inview(obj):
-            # breakpoint()
             print("opening object failed -- unsatisfied hidden preconditions")
             return
         prob = random.random()
@@ -490,7 +577,6 @@ def openit(obj, oracle=False):
 def closeit(obj, oracle=False):
     if not oracle:
         if not inview(obj):
-            # breakpoint()
             print("closing object failed -- unsatisfied hidden preconditions")
             return
         prob = random.random()
@@ -499,6 +585,71 @@ def closeit(obj, oracle=False):
             return
     env.task.object_scope[obj].states[Open].set_value(False)
     run_sim()
+
+
+def cut_into_half(knife_name, obj_name, oracle=False):
+    if not oracle:
+        if not inview(obj_name):
+            print("cutting object failed -- unsatisfied hidden preconditions")
+            return
+        if not obj_held:
+            print("you are not holding a knife")
+            return
+        prob = random.random()
+        if prob > HALVE_SUCCESS_PROB:
+            print("action failed randomly")
+            fall_prob = random.random()
+            if fall_prob < FALL_ON_GROUND_PROB_IF_FAILED:
+                # object falls on ground
+                print("object falls on ground")
+                fall(knife_name)
+            return
+    obj = env.task.object_scope[obj_name]
+    knife = env.task.object_scope[knife_name]
+    knife.enable_gravity()
+    knife.keep_still()
+    knife.set_position_orientation(
+        position=obj.get_position() + np.array([-0.15, 0, 0.2]),
+        orientation=T.euler2quat([-np.pi / 2, 0, 0]),
+    )
+    run_sim(100)
+    grasp(obj_name, oracle=True)
+
+
+def place_on_floor(obj, oracle=False):
+    obj_in_hand = env.task.object_scope[obj].wrapped_obj
+    global obj_held
+    if not oracle:
+        if obj_in_hand != obj_held:
+            print(
+                "You need to be grasping the object first to place it somewhere. -- unsatified hidden preconditions"
+            )
+            return
+        prob = random.random()
+        if prob > PLACE_ON_FLOOR_SUCCESS_PROB:
+            print("action failed randomly")
+            return
+    obj_in_hand.set_position_orientation(
+        position=np.array([0, PLACE_ON_FLOOR_DIST, 0.5]) + robot.get_position(),
+        orientation=robot.get_orientation(),
+    )
+    obj_in_hand.enable_gravity()
+    run_sim(50)
+    lookat(obj)
+
+    global filled
+    if filled:
+        while not obj_held.states[Filled].get_value(get_system(filled)):
+            assert obj_held.states[Filled].set_value(get_system(filled), True)
+            run_sim()
+        # assert obj_held.states[Filled].get_value(filled)
+        filled = None
+    obj_held = None
+    run_sim(50)
+
+    global onfloor_relationships
+    if obj not in onfloor_relationships:
+        onfloor_relationships.append(obj)
 
 
 def place_with_predicate(
@@ -531,7 +682,6 @@ def place_with_predicate(
             )
             return
         if not inview(obj_name):
-            # breakpoint()
             print("placing object failed -- unsatisfied hidden preconditions")
             return
         if (
@@ -545,6 +695,11 @@ def place_with_predicate(
         prob = random.random()
         if prob > PLACE_SUCCESS_PROB:
             print("action failed randomly")
+            fall_prob = random.random()
+            if fall_prob < FALL_ON_GROUND_PROB_IF_FAILED:
+                # object falls on ground
+                print("object falls on ground")
+                fall(obj_in_hand_name)
             return
     # Sample location to place object
     # while (
@@ -556,12 +711,14 @@ def place_with_predicate(
     obj_in_hand.set_position_orientation(obj_pose[0], obj_pose[1])
     # TODO: this line manually set the object relationships -- which should not happen
     obj_in_hand.enable_gravity()
-    run_sim()
+    run_sim(100)
+    lookat(obj_in_hand_name)
 
     if predicate == Inside:
         # manually add this into our inside relationship tracker due to issues with the simulator
         global inside_relationships
-        inside_relationships.append((obj_in_hand_name, obj_name))
+        if (obj_in_hand_name, obj_name) not in inside_relationships:
+            inside_relationships.append((obj_in_hand_name, obj_name))
 
     global filled
     if filled:
@@ -575,7 +732,14 @@ def place_with_predicate(
 
 def format_action_params(action):
     params = action[1:]
-    return [p.replace("-", ".") for p in params]
+    formatted_params = [p.replace("-", ".") for p in params]
+
+    # some exceptions in naming convention
+    # for p_id, p in enumerate(formatted_params):
+    #     if p == "hard.boiled_egg.n.01_1":
+    #         formatted_params[p_id] = "hard-boiled_egg.n.01_1"
+
+    return [p.replace("__", "-") for p in formatted_params]
 
 
 def translate_fact_to_question(fact):
@@ -585,31 +749,40 @@ def translate_fact_to_question(fact):
         fact = fact[1:]
 
     predicate = fact[0]
-    if predicate in ["inside", "inroom", "filled"]:
+    if predicate in ["inside", "inroom", "filled", "ontop"]:
         return f"Is {fact[1].split('-')[0]}{neg_suffix}{predicate} {fact[2].split('-')[0]}?"
     elif predicate in ["insource", "inhand", "inview"]:
         return f"Is {fact[2].split('-')[0]}{neg_suffix}{predicate} {fact[1].split('-')[0]}?"
-    elif predicate in ["handempty", "closed", "turnedon", "cooked"]:
+    elif predicate in [
+        "handempty",
+        "closed",
+        "turnedon",
+        "cooked",
+        "halved",
+        "onfloor",
+    ]:
         return f"Is {fact[1].split('-')[0]}{neg_suffix}{predicate}?"
     else:
         raise RuntimeError
 
 
 def update_states_by_fact(states, fact):
-
     if fact[0] == "not":
-        formatted_fact = f"(not ({fact[1]}"
+        formatted_fact = f"({fact[1]}"
         for param in fact[2:]:
             formatted_fact += f" {param}"
-        formatted_fact += "))"
+        formatted_fact += ")"
+        if formatted_fact not in states:
+            states.append(formatted_fact)
+            print(f"adding {formatted_fact}")
     else:
         formatted_fact = f"({fact[0]}"
         for param in fact[1:]:
             formatted_fact += f" {param}"
         formatted_fact += ")"
-    if formatted_fact in states:
-        states.remove(formatted_fact)
-        print(f"removing {formatted_fact}")
+        if formatted_fact in states:
+            states.remove(formatted_fact)
+            print(f"removing {formatted_fact}")
 
     return states
 
@@ -629,6 +802,47 @@ def write_states_into_problem(states, previous_problem):
     return new_problem_name
 
 
+def check_gt_facts(facts):
+    match_res = []
+    for fact in facts:
+        if any(s for s in fact if "handempty" in s):
+            match = "yes" if not obj_held else "no"
+        elif any(s for s in fact if "inhand" in s):
+            match = (
+                "yes" if obj_held else "no"
+            )  # TODO: check if the specific object is in hand
+        elif any(s for s in fact if "filled" in s):
+            container = fact[1].replace("-", ".").replace("__", "-")
+            if (
+                obj_held
+                and env.task.object_scope[container].wrapped_obj == obj_held
+                and filled
+            ):
+                match = "yes"
+            elif (
+                env.task.object_scope[container]
+                .states[Filled]
+                .get_value(get_system(fact[2].split("-")[0]))
+            ):
+                match = "yes"
+            else:
+                match = "no"
+        elif any(s for s in fact if "inside" in s):
+            match = (
+                "yes"
+                if (
+                    fact[-2].replace("-", ".").replace("__", "-"),
+                    fact[-1].replace("-", ".").replace("__", "-"),
+                )
+                in inside_relationships
+                else "no"
+            )
+        else:
+            NotImplementedError
+        match_res.append(match)
+    return match_res
+
+
 def check_states_and_update_problem(
     int_states, effs, pres, previous_problem, prev_states
 ):
@@ -643,23 +857,11 @@ def check_states_and_update_problem(
     valid_facts = []
     facts = effs + pres
     pre_start_idx = 0
+    pre_start_idx_gt = 0
+    gt_facts = []
 
     for fact_id, fact in enumerate(facts):
-
-        # TODO: need more discussions here
-        # we assume these two predicates don't change over time or cannot be detected visually
-        invalid_preds = [
-            "inroom",
-            "insource",
-            "inhand",
-            "handempty",
-            "cooked",
-            "filled",
-            "inside",
-            "turnedon",
-            "found",
-        ]
-        if fact[0] in invalid_preds or fact[1] in invalid_preds:
+        if fact[0] in IMPERCEIVABLE_PREDS or fact[1] in IMPERCEIVABLE_PREDS:
             continue
 
         fact_nl = translate_fact_to_question(fact)
@@ -689,28 +891,47 @@ def check_states_and_update_problem(
                 unmatched_pres.append(valid_facts[idx])
                 is_state_updated_by_pre = True
 
+    # for some predicates like handempty, inhand etc, we use ground truth
+    for fact_id, fact in enumerate(facts):
+        if fact[0] in GT_PREDS or fact[1] in GT_PREDS:
+            gt_facts.append(fact)
+            if fact_id < len(effs):
+                pre_start_idx_gt += 1
+    gt_fact_results = check_gt_facts(gt_facts)
+    for idx, is_match in enumerate(gt_fact_results):
+        if idx < len(gt_facts) and (
+            (("no" in is_match) and gt_facts[idx][0] != "not")
+            or (("yes" in is_match) and gt_facts[idx][0] == "not")
+        ):
+            if idx < pre_start_idx_gt:
+                unmatched_effs.append(gt_facts[idx])
+                is_state_updated_by_eff = True
+            else:
+                unmatched_pres.append(gt_facts[idx])
+                is_state_updated_by_pre = True
+
     if (not is_state_updated_by_pre) and (not is_state_updated_by_eff):
         print("All facts match -- current states remain unchanged")
-        updated_problem_file = write_states_into_problem(states, previous_problem)
     else:
         print(f"Here is a list of unmatched facts according to VLM's response --")
         print(f"unmatched effs: {unmatched_effs}")
         print(f"unmatched pres: {unmatched_pres}")
 
     if CHECK_EFFECT and is_state_updated_by_eff:
-        print(
-            "updating problem with previous states based on effects mismatch,"
-            + " and will suggest to re-execute the current skill if needed"
-        )
-        updated_problem_file = write_states_into_problem(prev_states, previous_problem)
+        print("updating problem with previous states based on effects mismatch")
+        for unmatched_fact in unmatched_effs:
+            print(f"Previous states: {states}")
+            states = update_states_by_fact(states, unmatched_fact)
+            print(f"Updated states: {states}")
+        updated_problem_file = write_states_into_problem(states, previous_problem)
     elif CHECK_PRECONDITION and is_state_updated_by_pre:
-        print(
-            "updating states based on preconditions mismatch, and will suggest to replan if needed"
-        )
+        print("updating states based on preconditions mismatch")
         for unmatched_fact in unmatched_pres:
             print(f"Previous states: {states}")
             states = update_states_by_fact(states, unmatched_fact)
             print(f"Updated states: {states}")
+        updated_problem_file = write_states_into_problem(states, previous_problem)
+    else:
         updated_problem_file = write_states_into_problem(states, previous_problem)
 
     return (
@@ -744,20 +965,20 @@ config["scene"]["not_load_object_categories"] = ["ceilings"]
 #########################################################################################
 
 # BOIL WATER IN THE MICROWAVE
-config["scene"]["scene_model"] = "Beechwood_0_int"
 a_name = "boil_water_in_the_microwave"
-
-# a_name = "halve_an_egg"
-# config["scene"]["scene_model"] = "Benevolence_1_int"
+config["scene"]["scene_model"] = "Beechwood_0_int"
 
 # a_name = "bringing_water"
 # config["scene"]["scene_model"] = "house_single_floor"
 
-# a_name = "store_beer"
-# config["scene"]["scene_model"] = "Ihlen_1_int"
+# a_name = "cook_a_frozen_pie"
+# config["scene"]["scene_model"] = "Beechwood_0_int"
 
-a_name = "cook_a_frozen_pie"
-config["scene"]["scene_model"] = "Beechwood_0_int"
+# a_name = "halve_an_egg"
+# config["scene"]["scene_model"] = "Benevolence_1_int"
+
+# a_name = "store_firewood"
+# config["scene"]["scene_model"] = "Ihlen_0_int"
 
 #########################################################################################
 
@@ -778,25 +999,6 @@ debug_path = "datadump/third_person"
 shutil.rmtree(debug_path, ignore_errors=True)
 os.makedirs(debug_path, exist_ok=True)
 
-# Load the environment
-env = og.Environment(configs=config)
-scene = env.scene
-robot = env.robots[0]
-
-robot_init_z = robot.get_position()[2]
-# Allow user to move camera more easily
-og.sim.enable_viewer_camera_teleoperation()
-og.sim.set_lighting_mode("Default")
-# run_sim_inf()
-ap = StarterSemanticActionPrimitives(env)
-domain_file = f"domains/{a_name}/domain.pddl"
-planner = pddlsim(domain_file)
-
-vlm_agent = GPT4VAgent()
-# vlm_agent = GeminiAgent()
-# from claude3 import Claude3Agent
-# vlm_agent = Claude3Agent()
-
 init_problem_file = f"domains/{a_name}/problem.pddl"
 
 exp_results = {"num_success": 0, "num_failed": 0}
@@ -806,15 +1008,40 @@ os.makedirs(LOG_DIR, exist_ok=True)
 run_dir = os.path.join(LOG_DIR, str(time.time()))
 os.makedirs(run_dir, exist_ok=False)
 
+domain_file = f"domains/{a_name}/domain.pddl"
+planner = pddlsim(domain_file)
 
+vlm_agent = GPT4VAgent()
+# vlm_agent = GeminiAgent()
+# from claude3 import Claude3Agent
+# vlm_agent = Claude3Agent()
+
+# Load the environment
+env = og.Environment(configs=config)
 while trial_counter < NUM_TRIALS:
+
+    og.sim.stop()
+    env.load()
+    scene = env.scene
+    robot = env.robots[0]
+
+    robot_init_z = robot.get_position()[2]
+    # Allow user to move camera more easily
+    og.sim.enable_viewer_camera_teleoperation()
+    og.sim.set_lighting_mode("Default")
+    # run_sim_inf()
+    ap = StarterSemanticActionPrimitives(env)
+
     trial_dir = os.path.join(run_dir, str(trial_counter))
     os.makedirs(trial_dir, exist_ok=False)
-    env.reset()
+    # env.reset()
     watch_robot()
+
     obj_held = None
     filled = None
     inside_relationships = []
+    onfloor_relationships = []
+
     sim_counter = 0
     run_sim()
     action_counter = 0
@@ -824,13 +1051,41 @@ while trial_counter < NUM_TRIALS:
         env.task.object_scope["mug.n.04_1"].set_position_orientation(
             position=[-7.62, -3.76, 0.66], orientation=[0, 0, 0, 1]
         )
+        inside_relationships.append(("mug.n.04_1", "cabinet.n.01_1"))
+
     if a_name == "cook_a_frozen_pie":
         env.task.object_scope["oven.n.01_1"].disable_gravity()
         run_sim()
         env.task.object_scope["oven.n.01_1"].states[Open].set_value(False)
         run_sim()
         env.task.object_scope["oven.n.01_1"].states[Open].set_value(False)
-    run_sim()
+        inside_relationships.append(("pie.n.01_1", "electric_refrigerator.n.01_1"))
+
+    if a_name == "store_brownies":
+        height = -1.8
+        brownie = env.task.object_scope["brownie.n.03_1"]
+        brownie.set_position(position=np.array([0, 0, height]) + brownie.get_position())
+        brownie = env.task.object_scope["brownie.n.03_2"]
+        brownie.set_position(position=np.array([0, 0, height]) + brownie.get_position())
+        tray = env.task.object_scope["tray.n.01_1"]
+        tray.set_position(position=np.array([0, 0, height]) + tray.get_position())
+        tupperware = env.task.object_scope["tupperware.n.01_1"]
+        tupperware.set_position(
+            position=np.array([0, 0, height]) + tupperware.get_position()
+        )
+    if a_name == "bringing_water":
+        PICK_OBJ_HEIGHT = 2.0
+    if a_name == "store_firewood":
+        env.task.object_scope["wooden_stick.n.01_1"] = env.task.object_scope[
+            "firewood.n.01_1"
+        ]
+        env.task.object_scope["wooden_stick.n.01_2"] = env.task.object_scope[
+            "firewood.n.01_2"
+        ]
+        env.task.object_scope["wooden_stick.n.01_3"] = env.task.object_scope[
+            "firewood.n.01_3"
+        ]
+        PICK_OBJ_HEIGHT = 2.8
 
     problem_file = init_problem_file
     terminate = False
@@ -850,7 +1105,6 @@ while trial_counter < NUM_TRIALS:
             primitive = action[0]
             action_params = format_action_params(action)
             print(f"Executing action: {action}")
-
             if primitive == "find":
                 # if not goto(action_params[1], oracle=is_oracle):
                 #     # there is something wrong with the skill, not the agent's fault
@@ -868,22 +1122,26 @@ while trial_counter < NUM_TRIALS:
                 place_with_predicate(
                     action_params[1], action_params[2], Inside, oracle=is_oracle
                 )
+            elif primitive == "place_on_floor":
+                place_on_floor(action_params[1], oracle=is_oracle)
             elif primitive == "closeit":
                 closeit(action_params[1], oracle=is_oracle)
             elif primitive == "microwave_water":
                 turnon(action_params[1], oracle=is_oracle)
             elif primitive == "heat_food_with_oven":
                 turnon(action_params[1], oracle=is_oracle)
+            elif primitive == "cut_into_half":
+                cut_into_half(action_params[1], action_params[2], oracle=is_oracle)
+            elif primitive == "placeon":
+                place_with_predicate(
+                    action_params[1], action_params[2], OnTop, oracle=is_oracle
+                )
             else:
                 raise RuntimeError
 
             action_counter += 1
 
-            if (
-                action_step == len(plan) - 1
-                or invalid_epi
-                or action_counter > MAX_NUM_ACTION
-            ):
+            if action_counter > MAX_NUM_ACTION:
                 terminate = True
                 break
 
@@ -928,24 +1186,27 @@ while trial_counter < NUM_TRIALS:
                 label += f"\nMismatch: {obs_log['eff_mismatch']}"
                 ax0.set_xlabel(label, fontsize=15)
 
+                ax1 = fig.add_subplot(spec[1])
+                ax1.imshow(cv2.resize(obs_log["tpv"], (1024, 512)))
+                ax1.set_title("Third Person View", fontsize=15)
                 if len(plan) > action_step + 1:
-                    ax1 = fig.add_subplot(spec[1])
-                    ax1.imshow(cv2.resize(obs_log["tpv"], (1024, 512)))
-                    ax1.set_title("Third Person View", fontsize=15)
                     label = f"Next: {plan[action_step + 1]}"
                     for query_idx, query in enumerate(obs_log["pre_queries"]):
                         label += f"\nPrecondition {query_idx+1}: {query}"
                         label += f"\nAnswer: {obs_log['pre_ans'][query_idx]}"
                     label += f"\nMismatch: {obs_log['pre_mismatch']}"
                     ax1.set_xlabel(label, fontsize=15)
-                    fig.tight_layout()
-                    plt.savefig(os.path.join(trial_dir, f"{action_counter-1}.png"))
+                plt.savefig(os.path.join(trial_dir, f"{action_counter-1}.png"))
 
                 if unmatch:
                     break
 
+            if action_step == len(plan) - 1 or invalid_epi:
+                terminate = True
+
     # check success condition
     if not invalid_epi:
+        run_sim(200)
         if a_name == "boil_water_in_the_microwave":
             if (
                 env.task.object_scope["mug.n.04_1"]
@@ -974,6 +1235,45 @@ while trial_counter < NUM_TRIALS:
                 print("failed")
                 exp_results["num_failed"] += 1
             # env.task.object_scope["pie.n.01_1"].states[Inside].get_value(env.task.object_scope["oven.n.01_1"])
+        elif a_name == "halve_an_egg":
+
+            if (
+                env.task.object_scope["half__hard-boiled_egg.n.01_1"].exists
+                and env.task.object_scope["half__hard-boiled_egg.n.01_2"].exists
+            ):
+                print("success")
+                exp_results["num_success"] += 1
+            else:
+                print("failed")
+                exp_results["num_failed"] += 1
+        elif a_name == "bringing_water":
+            if (
+                0 < env.task.object_scope["water_bottle.n.01_1"].get_position()[2] < 0.1
+                and 0
+                < env.task.object_scope["water_bottle.n.01_2"].get_position()[2]
+                < 0.1
+                and "water_bottle.n.01_1" in onfloor_relationships
+                and "water_bottle.n.01_2" in onfloor_relationships
+            ):
+                print("success")
+                exp_results["num_success"] += 1
+            else:
+                print("failed")
+                exp_results["num_failed"] += 1
+        elif a_name == "store_firewood":
+            if (
+                env.task.object_scope["wooden_stick.n.01_2"].get_position()[2] > 0.3
+                and env.task.object_scope["wooden_stick.n.01_3"].get_position()[2] > 0.3
+                and not obj_held
+            ):
+                print("success")
+                exp_results["num_success"] += 1
+            else:
+                print("failed")
+                exp_results["num_failed"] += 1
+        else:
+            raise NotImplementedError
+
         with open("exp_results.json", "w") as f:
             json.dump(exp_results, f)
         trial_counter += 1
@@ -983,3 +1283,5 @@ print("SUMMARY:")
 print(f"Number of success: {exp_results['num_success']}")
 print(f"Number of failure: {exp_results['num_failed']}")
 print("=" * 30)
+
+env.close()

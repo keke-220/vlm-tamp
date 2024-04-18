@@ -137,6 +137,11 @@ class pddlsim(object):
 if __name__ == "__main__":
     task = "domains/boil_water_in_the_microwave/"
     task = "domains/cook_a_frozen_pie/"
+    task = "domains/halve_an_egg/"
+    task = "domains/bringing_water/"
+    task = "domains/store_beer/"
+    task = "domains/store_brownies/"
+    task = "domains/store_firewood/"
     p = task + "problem.pddl"
     # p = "updated_problem.pddl"
     test = pddlsim(task + "domain.pddl")

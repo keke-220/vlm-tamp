@@ -5,11 +5,11 @@
     (:types
         movable liquid furniture room agent - object
 
-        mug pie - movable
+        wooden_stick tupperware brownie beer_bottle water_bottle mug pie carving_knife hard__boiled_egg - movable
         water - liquid
-        electric_refrigerator oven cabinet sink floor microwave - furniture
+        countertop electric_refrigerator oven cabinet sink floor microwave table - furniture
 
-        kitchen - room
+        kitchen living_room - room
 
         water-n-06 - water
         mug-n-04 - mug
@@ -20,6 +20,15 @@
         pie-n-01 - pie
         oven-n-01 - oven
         electric_refrigerator-n-01 - electric_refrigerator
+        carving_knife-n-01 - carving_knife
+        countertop-n-01 - countertop
+        hard__boiled_egg-n-01 - hard__boiled_egg
+        water_bottle-n-01 - water_bottle
+        beer_bottle-n-01 - beer_bottle
+        brownie-n-03 - brownie
+        tupperware-n-01 - tupperware
+        wooden_stick-n-01 - wooden_stick
+        table-n-02 - table
 
         agent-n-01 - agent
     )
@@ -32,12 +41,16 @@
         (inview ?a - agent ?o - object)
         (handempty ?a - agent)
         (closed ?o - object)
-        (filled ?o - object ?w - liquid)
+        (filled ?o - movable ?w - liquid)
+        (filledsink ?s - sink ?w - liquid)
         (turnedon ?o - object)
         (cooked ?o - object)
         (found ?a - agent ?o - object)
         (frozen ?o - object)
         (hot ?o - object)
+        (halved ?o - object)
+        (onfloor ?o - object ?f - floor)
+        (ontop ?o1 - object ?o2 - object)
     )
 
     (:action find
@@ -59,19 +72,30 @@
     (:action placein
         :parameters (?a - agent ?o1 - movable ?o2 - object)
         :precondition (and (not (handempty ?a)) (inhand ?a ?o1) (inview ?a ?o2) (found ?a ?o2) (not (closed ?o2)))
-        :effect (and (handempty ?a) (not (inhand ?a ?o1)) (inside ?o1 ?o2))
+        :effect (and (handempty ?a) (not (inhand ?a ?o1)) (inside ?o1 ?o2) (forall
+                (?oo - object)
+                (when
+                    (inside ?oo ?o1)
+                    (inside ?oo ?o2))
+            ))
+    )
+
+    (:action placeon
+        :parameters (?a - agent ?o1 - movable ?o2 - object)
+        :precondition (and (not (handempty ?a)) (inhand ?a ?o1) (inview ?a ?o2) (found ?a ?o2))
+        :effect (and (handempty ?a) (not (inhand ?a ?o1)) (ontop ?o1 ?o2))
     )
 
     (:action fillsink
         :parameters (?a - agent ?s - sink ?w - liquid)
-        :precondition (and (inview ?a ?s) (found ?a ?s) (insource ?s ?w) (not (filled ?s ?w)))
-        :effect (filled ?s ?w)
+        :precondition (and (inview ?a ?s) (found ?a ?s) (insource ?s ?w))
+        :effect (filledsink ?s ?w)
     )
 
     (:action fill
         :parameters (?a - agent ?o - movable ?s - sink ?w - liquid)
-        :precondition (and (inhand ?a ?o) (filled ?s ?w) (not (filled ?o ?w)) (inview ?a ?s) (found ?a ?s))
-        :effect (and (filled ?o ?w) (not (filled ?s ?w)))
+        :precondition (and (inhand ?a ?o) (not (handempty ?a)) (filledsink ?s ?w) (inview ?a ?s) (found ?a ?s))
+        :effect (and (filled ?o ?w) (not (filledsink ?s ?w)))
     )
 
     (:action openit
@@ -93,7 +117,7 @@
                 (when
                     (inside ?oo ?o)
                     (not (inroom ?oo ?r)))
-                    ; (and (not (inroom ?oo ?r)) (not (inview ?a ?oo))))
+                ; (and (not (inroom ?oo ?r)) (not (inview ?a ?oo))))
             ))
     )
 
@@ -107,5 +131,17 @@
         :parameters (?a - agent ?v - oven ?f - object)
         :precondition (and (inview ?a ?v) (found ?a ?v) (inside ?f ?v))
         :effect (and (hot ?f) (turnedon ?v))
+    )
+
+    (:action cut_into_half
+        :parameters (?a - agent ?k - carving_knife ?o - object)
+        :precondition (and (inview ?a ?o) (found ?a ?o) (not (handempty ?a)) (inhand ?a ?k))
+        :effect (halved ?o)
+    )
+
+    (:action place_on_floor
+        :parameters (?a - agent ?o - object ?f - floor)
+        :precondition (and (inview ?a ?f) (found ?a ?f) (not (handempty ?a)) (inhand ?a ?o))
+        :effect (and (handempty ?a) (not (inhand ?a ?o)) (onfloor ?o ?f))
     )
 )
