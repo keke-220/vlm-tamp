@@ -75,9 +75,10 @@ MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 1000
 PICK_OBJ_HEIGHT = 1.15
 PLACE_ON_FLOOR_DIST = 1.5
 FALL_ON_FLOOR_DIST = 1.5
-NUM_TRIALS = 10
+NUM_TRIALS = 20
 CHECK_PRECONDITION = True
 CHECK_EFFECT = True
+CHECK_IN_NL = True
 MAX_NUM_ACTION = 50
 MAX_TELEPORT_DIST = 2.5
 MIN_TELEPORT_DIST = 1.0
@@ -86,9 +87,9 @@ MIN_TELEPORT_DIST = 1.0
 OTHER_ACTION_SUCCESS_PROB = 0.9
 NAV_SUCCESS_PROB = 0.8
 PICK_SUCCESS_PROB = 0.5  # TODO: change
-PLACE_SUCCESS_PROB = 0.5
-OPEN_SUCCESS_PROB = 0.8
-CLOSE_SUCCESS_PROB = 0.8
+PLACE_SUCCESS_PROB = 0.8
+OPEN_SUCCESS_PROB = 0.9
+CLOSE_SUCCESS_PROB = 0.9
 HALVE_SUCCESS_PROB = 0.5
 PLACE_ON_FLOOR_SUCCESS_PROB = 0.8
 # for action fill, grasp and place, there is a probability that the object will fall on the floor
@@ -337,7 +338,7 @@ def lookat(obj_name="can_of_soda_89"):
 def watch_robot():
     og.sim.viewer_camera.set_position_orientation(
         position=np.array([0, 0, 3.5]) + robot.get_position(),
-        orientation=rotate_z(rotate_x(robot.get_orientation(), 90), -15),
+        orientation=rotate_z(rotate_x(robot.get_orientation(), 90), -20),
     )
 
 
@@ -613,7 +614,7 @@ def cut_into_half(knife_name, obj_name, oracle=False):
         orientation=T.euler2quat([-np.pi / 2, 0, 0]),
     )
     run_sim(100)
-    grasp(obj_name, oracle=True)
+    grasp(knife_name, oracle=True)
 
 
 def place_on_floor(obj, oracle=False):
@@ -747,8 +748,8 @@ def translate_fact_to_question(fact):
     if fact[0] == "not":
         # neg_suffix = " not "
         fact = fact[1:]
-
     predicate = fact[0]
+
     if predicate in ["inside", "inroom", "filled", "ontop"]:
         return f"Is {fact[1].split('-')[0]}{neg_suffix}{predicate} {fact[2].split('-')[0]}?"
     elif predicate in ["insource", "inhand", "inview"]:
@@ -844,7 +845,13 @@ def check_gt_facts(facts):
 
 
 def check_states_and_update_problem(
-    int_states, effs, pres, previous_problem, prev_states
+    int_states,
+    effs,
+    pres,
+    previous_problem,
+    prev_states,
+    cur_action=None,
+    next_action=None,
 ):
     states = int_states.copy()
     unmatched_pres = []
@@ -864,7 +871,19 @@ def check_states_and_update_problem(
         if fact[0] in IMPERCEIVABLE_PREDS or fact[1] in IMPERCEIVABLE_PREDS:
             continue
 
-        fact_nl = translate_fact_to_question(fact)
+        if not CHECK_IN_NL:
+            fact_nl = translate_fact_to_question(fact)
+        else:
+            if fact_id < len(effs):
+                if fact[0] == "not":
+                    fact_nl = f"Was the action {cur_action[:-1]} failed?"
+                else:
+                    fact_nl = f"Was the action {cur_action[:-1]} successful?"
+            else:
+                if fact[0] == "not":
+                    fact_nl = f"Is it impossible to {next_action[:-1]}?"
+                else:
+                    fact_nl = f"Is it possible to {next_action[:-1]}?"
         facts_nl.append(fact_nl)
         valid_facts.append(fact)
 
@@ -879,6 +898,7 @@ def check_states_and_update_problem(
         is_match_results = vlm_agent.ask(";".join(facts_nl), get_fpv_rgb())
     else:
         is_match_results = []
+
     for idx, is_match in enumerate(is_match_results):
         if idx < len(valid_facts) and (
             (("no" in is_match) and valid_facts[idx][0] != "not")
@@ -904,9 +924,31 @@ def check_states_and_update_problem(
             or (("yes" in is_match) and gt_facts[idx][0] == "not")
         ):
             if idx < pre_start_idx_gt:
+                if gt_facts[idx][0] == "inhand":
+                    # grasp something failed, the agent will assume it falls on the floor
+                    unmatched_effs.append(
+                        ["not", "ontop", gt_facts[idx][2], "floor-n-01_1"]
+                    )
+                    # and whatever it is filled is gone
+                    unmatched_effs.append(["filled", gt_facts[idx][2], "water-n-06_1"])
+                if gt_facts[idx][1] == "inhand":
+                    # place something failed, and not in hand, we assume it's on the floor
+                    unmatched_effs.append(
+                        ["not", "ontop", gt_facts[idx][3], "floor-n-01_1"]
+                    )
+                    # and whatever it is filled is gone
+                    unmatched_effs.append(["filled", gt_facts[idx][3], "water-n-06_1"])
                 unmatched_effs.append(gt_facts[idx])
                 is_state_updated_by_eff = True
             else:
+                # deal with situations like object falling during navigation
+                if gt_facts[idx][0] == "inhand":
+                    # if not in hand before place and object, then we believe it's falling on the floor
+                    unmatched_pres.append(
+                        ["not", "ontop", gt_facts[idx][2], "floor-n-01_1"]
+                    )
+                    # and whatever it is filled is gone
+                    unmatched_pres.append(["filled", gt_facts[idx][2], "water-n-06_1"])
                 unmatched_pres.append(gt_facts[idx])
                 is_state_updated_by_pre = True
 
@@ -965,14 +1007,14 @@ config["scene"]["not_load_object_categories"] = ["ceilings"]
 #########################################################################################
 
 # BOIL WATER IN THE MICROWAVE
-a_name = "boil_water_in_the_microwave"
-config["scene"]["scene_model"] = "Beechwood_0_int"
+# a_name = "boil_water_in_the_microwave"
+# config["scene"]["scene_model"] = "Beechwood_0_int"
 
 # a_name = "bringing_water"
 # config["scene"]["scene_model"] = "house_single_floor"
 
-# a_name = "cook_a_frozen_pie"
-# config["scene"]["scene_model"] = "Beechwood_0_int"
+a_name = "cook_a_frozen_pie"
+config["scene"]["scene_model"] = "Beechwood_0_int"
 
 # a_name = "halve_an_egg"
 # config["scene"]["scene_model"] = "Benevolence_1_int"
@@ -1102,6 +1144,21 @@ while trial_counter < NUM_TRIALS:
             problem_file, "pddl_output.txt"
         )
         for action_step, action in enumerate(plan):
+            if action_step == 0 and CHECK_PRECONDITION:
+                current_states = intermediate_states[action_step]
+                preconditions = planner.get_preconditions_by_action(plan[action_step])
+                unmatch, problem_file, obs_log = check_states_and_update_problem(
+                    current_states,
+                    [],
+                    preconditions,
+                    problem_file,
+                    None,
+                    cur_action=None,
+                    next_action=plan[action_step],
+                )
+                if unmatch:
+                    break
+
             primitive = action[0]
             action_params = format_action_params(action)
             print(f"Executing action: {action}")
@@ -1112,7 +1169,7 @@ while trial_counter < NUM_TRIALS:
                 goto(action_params[1], oracle=is_oracle)
             elif primitive == "openit":
                 openit(action_params[1], oracle=is_oracle)
-            elif primitive == "grasp":
+            elif primitive in ["grasp", "graspin", "graspon"]:
                 grasp(action_params[1], oracle=is_oracle)
             elif primitive == "fillsink":
                 fill_sink(action_params[1], oracle=is_oracle)
@@ -1165,6 +1222,10 @@ while trial_counter < NUM_TRIALS:
                     preconditions,
                     problem_file,
                     intermediate_states[action_step],
+                    cur_action=plan[action_step],
+                    next_action=(
+                        plan[action_step + 1] if len(plan) > action_step + 1 else None
+                    ),
                 )
 
                 # visualization

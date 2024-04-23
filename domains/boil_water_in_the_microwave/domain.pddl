@@ -63,10 +63,16 @@
                     (not (found ?a ?oo)))))
     )
 
-    (:action grasp
+    (:action graspon
         :parameters (?a - agent ?o1 - movable ?o2 - object)
-        :precondition (and (inview ?a ?o1) (found ?a ?o1) (handempty ?a))
-        :effect (and (not (inview ?a ?o1)) (not (handempty ?a)) (inhand ?a ?o1))
+        :precondition (and (inview ?a ?o1) (found ?a ?o1) (handempty ?a) (ontop ?o1 ?o2))
+        :effect (and (not (inview ?a ?o1)) (not (handempty ?a)) (inhand ?a ?o1) (not (ontop ?o1 ?o2)))
+    )
+
+    (:action graspin
+        :parameters (?a - agent ?o1 - movable ?o2 - object)
+        :precondition (and (inview ?a ?o1) (found ?a ?o1) (handempty ?a) (inside ?o1 ?o2))
+        :effect (and (not (inview ?a ?o1)) (not (handempty ?a)) (inhand ?a ?o1) (not (inside ?o1 ?o2)))
     )
 
     (:action placein
