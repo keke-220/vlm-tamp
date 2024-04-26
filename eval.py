@@ -78,7 +78,7 @@ FALL_ON_FLOOR_DIST = 1.5
 NUM_TRIALS = 20
 CHECK_PRECONDITION = True
 CHECK_EFFECT = True
-CHECK_IN_NL = True
+CHECK_IN_NL = False
 MAX_NUM_ACTION = 50
 MAX_TELEPORT_DIST = 2.5
 MIN_TELEPORT_DIST = 1.0
@@ -99,6 +99,12 @@ OPEN_FULLY = True
 LOG_DIR = "datadump/"
 
 is_oracle = False
+
+vlm_agent = GPT4VAgent()
+# vlm_agent = GeminiAgent()
+
+# from claude3 import Claude3Agent
+# vlm_agent = Claude3Agent()
 
 # remember to reset them for new episode!!!
 # obj_held = None
@@ -555,7 +561,6 @@ def fill(container, sink, liquid="water", oracle=False):
     # import pdb; pdb.set_trace()
     filled = liquid
     # container_obj.states[Filled].get_value(system)
-    # import pdb; pdb.set_trace()
     get_system(liquid).remove_all_particles()
     grasp(container, oracle=True)
 
@@ -1007,14 +1012,14 @@ config["scene"]["not_load_object_categories"] = ["ceilings"]
 #########################################################################################
 
 # BOIL WATER IN THE MICROWAVE
-# a_name = "boil_water_in_the_microwave"
-# config["scene"]["scene_model"] = "Beechwood_0_int"
+a_name = "boil_water_in_the_microwave"
+config["scene"]["scene_model"] = "Beechwood_0_int"
 
 # a_name = "bringing_water"
 # config["scene"]["scene_model"] = "house_single_floor"
 
-a_name = "cook_a_frozen_pie"
-config["scene"]["scene_model"] = "Beechwood_0_int"
+# a_name = "cook_a_frozen_pie"
+# config["scene"]["scene_model"] = "Beechwood_0_int"
 
 # a_name = "halve_an_egg"
 # config["scene"]["scene_model"] = "Benevolence_1_int"
@@ -1052,11 +1057,6 @@ os.makedirs(run_dir, exist_ok=False)
 
 domain_file = f"domains/{a_name}/domain.pddl"
 planner = pddlsim(domain_file)
-
-vlm_agent = GPT4VAgent()
-# vlm_agent = GeminiAgent()
-# from claude3 import Claude3Agent
-# vlm_agent = Claude3Agent()
 
 # Load the environment
 env = og.Environment(configs=config)
