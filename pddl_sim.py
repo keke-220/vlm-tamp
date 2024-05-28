@@ -48,11 +48,14 @@ class pddlsim(object):
     def get_intermediate_states(self, problem_file, plan_file):
         """apply a plan to a pddl problem using the validation tool, return a list of intermediate states"""
         int_states = []
-        output = subprocess.check_output(
-            "VAL/build/linux64/Release/bin/Validate -v "
-            + f"{self.domain_file} {problem_file} {plan_file}",
-            shell=True,
-        )
+        try:
+            output = subprocess.check_output(
+                "VAL/build/linux64/Release/bin/Validate -v "
+                + f"{self.domain_file} {problem_file} {plan_file}",
+                shell=True,
+            )
+        except:
+            return None
         init_states = self.get_init_states(problem_file)
         output = output.decode("utf-8").split("\n")
         start_index = next((i + 2 for i, s in enumerate(output) if "-----" in s), None)

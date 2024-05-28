@@ -76,8 +76,8 @@ PICK_OBJ_HEIGHT = 1.15
 PLACE_ON_FLOOR_DIST = 1.5
 FALL_ON_FLOOR_DIST = 1.5
 NUM_TRIALS = 20
-CHECK_PRECONDITION = True
-CHECK_EFFECT = True
+CHECK_PRECONDITION = False
+CHECK_EFFECT = False
 CHECK_IN_NL = False
 MAX_NUM_ACTION = 50
 MAX_TELEPORT_DIST = 2.5
@@ -86,18 +86,19 @@ MIN_TELEPORT_DIST = 1.0
 # action probs
 OTHER_ACTION_SUCCESS_PROB = 0.9
 NAV_SUCCESS_PROB = 0.8
-PICK_SUCCESS_PROB = 0.5  # TODO: change
+PICK_SUCCESS_PROB = 0.5
 PLACE_SUCCESS_PROB = 0.8
 OPEN_SUCCESS_PROB = 0.9
 CLOSE_SUCCESS_PROB = 0.9
 HALVE_SUCCESS_PROB = 0.5
 PLACE_ON_FLOOR_SUCCESS_PROB = 0.8
 # for action fill, grasp and place, there is a probability that the object will fall on the floor
-FALL_ON_GROUND_PROB_IF_FAILED = 0.5  # TODO: change
+FALL_ON_GROUND_PROB_IF_FAILED = 0.5
 
 OPEN_FULLY = True
 LOG_DIR = "datadump/"
 
+VLM_PLANNING = True  # use VLM as the planner
 is_oracle = False
 
 vlm_agent = GPT4VAgent()
@@ -1012,8 +1013,8 @@ config["scene"]["not_load_object_categories"] = ["ceilings"]
 #########################################################################################
 
 # BOIL WATER IN THE MICROWAVE
-a_name = "boil_water_in_the_microwave"
-config["scene"]["scene_model"] = "Beechwood_0_int"
+# a_name = "boil_water_in_the_microwave"
+# config["scene"]["scene_model"] = "Beechwood_0_int"
 
 # a_name = "bringing_water"
 # config["scene"]["scene_model"] = "house_single_floor"
@@ -1024,8 +1025,8 @@ config["scene"]["scene_model"] = "Beechwood_0_int"
 # a_name = "halve_an_egg"
 # config["scene"]["scene_model"] = "Benevolence_1_int"
 
-# a_name = "store_firewood"
-# config["scene"]["scene_model"] = "Ihlen_0_int"
+a_name = "store_firewood"
+config["scene"]["scene_model"] = "Ihlen_0_int"
 
 #########################################################################################
 
@@ -1135,15 +1136,25 @@ while trial_counter < NUM_TRIALS:
 
     while not terminate:
         # planning
-        plan = planner.plan(problem_file)
+        if VLM_PLANNING:
+            plan = vlm_agent.plan(problem_file, domain_file)
+        else:
+            plan = planner.plan(problem_file)
         print(f"Planning -- {plan}")
         if not plan:
             break
+
         # begin execution
         intermediate_states = planner.get_intermediate_states(
             problem_file, "pddl_output.txt"
         )
+
         for action_step, action in enumerate(plan):
+
+            if not intermediate_states:
+                terminate = True
+                break
+
             if action_step == 0 and CHECK_PRECONDITION:
                 current_states = intermediate_states[action_step]
                 preconditions = planner.get_preconditions_by_action(plan[action_step])

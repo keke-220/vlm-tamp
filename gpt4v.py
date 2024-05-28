@@ -10,6 +10,7 @@ import time
 class GPT4VAgent:
     def __init__(self):
         self.prompt = "prompts.txt"
+        self.planning_prompt = "planning_prompts.txt"
         self.api_key = "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"
         # claude = "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"
         self.max_tokens = 50
@@ -18,6 +19,7 @@ class GPT4VAgent:
         self.errors = {}
         self.responses = {}
         self.current_round = 0
+        self.gpt_version = "gpt-4-turbo"
         # self.resize = transforms.Resize((self.cfg["img_size"], self.cfg["img_size"]))
 
     def reset(self):
@@ -52,8 +54,9 @@ class GPT4VAgent:
         }
         context_messages.append({"type": "text", "text": questions})
         context_messages.append(text_img)
+
         chat_input = {
-            "model": "gpt-4-turbo",
+            "model": self.gpt_version,
             "messages": [
                 {"role": "system", "content": open(self.prompt).read()},
                 {"role": "user", "content": context_messages},
@@ -63,7 +66,7 @@ class GPT4VAgent:
         }
         return chat_input
 
-    def _request_gpt4v(self, chat_input, num_questions):
+    def _request_gpt4v(self, chat_input, num_questions=-1):
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -97,6 +100,47 @@ class GPT4VAgent:
         self.responses[self.current_round] = res
         # return " ".join(res.split(" ")[1:])
         return res, False
+
+    def plan(self, problem, domain):
+        problem_description = open(problem).read()
+        domain_knowledge = open(domain).read()
+        system_prompts = open(self.planning_prompt).read()
+        context_messages = [
+            {
+                "type": "text",
+                "text": f"Problem definition:\n{problem_description}\n"
+                + f"Domain knowledge:\n{domain_knowledge}\n"
+                + "Plan:\n",
+            }
+        ]
+        chat_input = {
+            "model": self.gpt_version,
+            "messages": [
+                {"role": "system", "content": system_prompts},
+                {"role": "user", "content": context_messages},
+            ],
+            "max_tokens": 1000,
+            # "temperature": self.temperature,
+        }
+        retry = True
+        while retry:
+            ans, retry = self._request_gpt4v(chat_input)
+        ans = ans.lower().split(";")
+
+        # form pddl_output.txt
+        pddl_output = ""
+        for action in ans:
+            pddl_output += '(' + action.strip() + ')\n'
+        pddl_output += f"; cost = {len(ans)} (unit cost)"
+        with open('pddl_output.txt', 'w') as f:
+            f.write(pddl_output)
+
+        ret = []
+        for action in ans:
+            action_list = action.strip().split(" ")
+            action_list.append("(1)") # add unit cost
+            ret.append(action_list[:])
+        return ret
 
     def ask(
         self,

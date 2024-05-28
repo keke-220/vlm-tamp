@@ -123,7 +123,6 @@
                 (when
                     (inside ?oo ?o)
                     (not (inroom ?oo ?r)))
-                ; (and (not (inroom ?oo ?r)) (not (inview ?a ?oo))))
             ))
     )
 
