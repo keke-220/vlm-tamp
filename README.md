@@ -2,20 +2,15 @@
 
 ## Installation
 
-### Set up the environment
+### Install OmniGibson
+This project is based on the open-source OmniGibson simulator and Behavior-1k benchmark. Follow their [instructions](https://behavior.stanford.edu/omnigibson/getting_started/installation.html) to install. We suggest to install OmniGibson from source.
 
+### Run Example Eval Script
+Clone this repo:
+```bash
+https://github.com/keke-220/vlm-tamp.git
 ```
-cd vlm-tamp/
-conda env create -f env.yml
-conda activate vlm-tamp
+In the same conda environment as you run OmniGibson (`conda activate omnigibson`), run our eval simply with:
 ```
-
-### Download datasets
-
-Download the `tpvqa_dalle_v0` dataset from [here](https://drive.google.com/drive/folders/1EsJXV42pMpn6uN50y-Hrh9BT9JAPMs80?usp=sharing), and put `tpvqa_dalle_v0/` in the `datasets/` folder.
-
-### Run one of the task
-
-```
-python src/clean_dishes.py
+python eval.py
 ```
