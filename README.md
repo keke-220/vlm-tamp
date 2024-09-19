@@ -8,7 +8,9 @@ This project is based on the open-source OmniGibson simulator and Behavior-1k be
 ### Run Example Eval Script
 Clone this repo:
 ```bash
-https://github.com/keke-220/vlm-tamp.git
+git clone https://github.com/keke-220/vlm-tamp.git
+cd vlm-tamp
+git submodule update --init --recursive
 ```
 In the same conda environment as you run OmniGibson (`conda activate omnigibson`), run our eval simply with:
 ```
